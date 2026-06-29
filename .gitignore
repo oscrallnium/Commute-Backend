@@ -1,0 +1,14 @@
+.env
+*.log
+tmp/
+storage/
+node_modules/
+.bundle/
+vendor/bundle/
+.byebug_history
+# Bundler vendored gems (bundle install --path)
+cache/
+gems/
+extensions/
+plugins/
+specifications/

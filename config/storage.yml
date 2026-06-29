@@ -1,0 +1,18 @@
+test:
+  service: Disk
+  root: <%= Rails.root.join("tmp/storage") %>
+
+local:
+  service: Disk
+  root: <%= Rails.root.join("storage") %>
+
+# Supabase Storage — S3-compatible
+# Set these in Railway environment variables
+supabase:
+  service: S3
+  access_key_id: <%= ENV["SUPABASE_S3_ACCESS_KEY"] %>
+  secret_access_key: <%= ENV["SUPABASE_S3_SECRET_KEY"] %>
+  region: <%= ENV["SUPABASE_S3_REGION"] || "ap-southeast-1" %>
+  bucket: <%= ENV["SUPABASE_STORAGE_BUCKET"] || "commute-navigator-maps" %>
+  endpoint: <%= ENV["SUPABASE_S3_ENDPOINT"] %>
+  force_path_style: true
