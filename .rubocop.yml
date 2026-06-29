@@ -1,0 +1,93 @@
+plugins:
+  - rubocop-rails
+
+AllCops:
+  NewCops: enable
+  SuggestExtensions: false
+  TargetRubyVersion: 3.4
+  Exclude:
+    - "db/schema.rb"
+    - "db/migrate/**/*"
+    - "db/seeds.rb"
+    - "bin/**/*"
+    - "config/environments/**/*"
+    - "node_modules/**/*"
+    - "vendor/**/*"
+    - "gems/**/*"
+    - "cache/**/*"
+    - "extensions/**/*"
+    - "plugins/**/*"
+    - "specifications/**/*"
+
+# Rails projects use double-quoted strings by convention
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+# Class-level docs are not standard for Rails controllers/models
+Style/Documentation:
+  Enabled: false
+
+# frozen_string_literal is optional in Rails — skip it
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+# Controllers and service methods routinely exceed 10 lines
+Metrics/MethodLength:
+  Max: 20
+  Exclude:
+    - "app/controllers/**/*"
+    - "app/services/**/*"
+
+Metrics/AbcSize:
+  Max: 30
+  Exclude:
+    - "app/controllers/**/*"
+    - "app/services/**/*"
+
+Metrics/CyclomaticComplexity:
+  Exclude:
+    - "app/services/**/*"
+
+Metrics/PerceivedComplexity:
+  Exclude:
+    - "app/services/**/*"
+
+Metrics/ClassLength:
+  Max: 150
+  Exclude:
+    - "app/services/**/*"
+
+Metrics/BlockLength:
+  Exclude:
+    - "config/routes.rb"
+    - "spec/**/*"
+    - "app/services/**/*"
+
+Layout/LineLength:
+  Max: 130
+
+# Short param names (e.g. `e`, `id`) are fine in small lambdas/blocks
+Naming/MethodParameterName:
+  MinNameLength: 1
+
+# rescue => e is idiomatic Ruby; standard error is intentional here
+Style/RescueStandardError:
+  Enabled: false
+
+# update_column is used intentionally for JTI rotation and ring-buffer metadata
+Rails/SkipsModelValidations:
+  Exclude:
+    - "app/services/**/*"
+    - "app/controllers/**/*"
+
+# Rails/HttpStatus prefers symbol style (:ok vs 200)
+Rails/HttpStatus:
+  EnforcedStyle: symbolic
+
+# rack_attack.rb uses compact class style intentionally
+Style/ClassAndModuleChildren:
+  Exclude:
+    - "config/initializers/rack_attack.rb"

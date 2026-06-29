@@ -16,10 +16,10 @@ module Api
               data: {
                 token: token,
                 user: {
-                  id:           resource.id,
-                  email:        resource.email,
+                  id: resource.id,
+                  email: resource.email,
                   display_name: resource.display_name,
-                  role:         resource.role
+                  role: resource.role
                 }
               }
             }, status: :created
@@ -27,7 +27,7 @@ module Api
             render json: {
               error: "Registration failed",
               errors: resource.errors.full_messages
-            }, status: :unprocessable_entity
+            }, status: :unprocessable_content
           end
         end
 

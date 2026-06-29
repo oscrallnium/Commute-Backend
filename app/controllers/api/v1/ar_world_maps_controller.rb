@@ -9,7 +9,7 @@ module Api
         maps = ArWorldMap.includes(:user)
         maps = maps.where(station_id: params[:station_id]) if params[:station_id].present?
         maps = maps.where(status: params[:status])         if params[:status].present?
-        maps = maps.approved unless current_user.admin?    # public sees approved only
+        maps = maps.approved unless current_user.admin? # public sees approved only
 
         pagy, maps = pagy(maps.order(version: :desc))
         json_response(maps.map(&:as_api_json), meta: paginate_meta(pagy))
@@ -28,19 +28,15 @@ module Api
       # multipart/form-data: station_id, map_file
       def create
         file = params[:map_file]
-        if file.nil?
-          return error_response("map_file is required", status: :bad_request)
-        end
-        if file.size > MAX_UPLOAD_BYTES
-          return error_response("File too large (max 150 MB)", status: :payload_too_large)
-        end
+        return error_response("map_file is required", status: :bad_request) if file.nil?
+        return error_response("File too large (max 150 MB)", status: :payload_too_large) if file.size > MAX_UPLOAD_BYTES
 
         map = ArWorldMap.new(
-          user:       current_user,
+          user: current_user,
           station_id: params[:station_id],
-          status:     "pending",
-          version:    next_version(params[:station_id]),
-          metadata:   {}
+          status: "pending",
+          version: next_version(params[:station_id]),
+          metadata: {}
         )
         map.map_file.attach(file)
 
@@ -56,10 +52,10 @@ module Api
       def relocalize
         map = ArWorldMap.find(params[:id])
         event = {
-          timestamp:  Time.current.iso8601,
-          accuracy:   params[:accuracy],
-          user_id:    current_user.id,
-          device:     params[:device]
+          timestamp: Time.current.iso8601,
+          accuracy: params[:accuracy],
+          user_id: current_user.id,
+          device: params[:device]
         }
 
         # Ring-buffer cap: keep last 100 events

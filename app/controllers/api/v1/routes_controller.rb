@@ -14,16 +14,16 @@ module Api
               .map do |e|
             stop_count = Station.where(line: e.line).count
             {
-              line_id:           e.line,
-              mode:              e.mode,
-              base_fare:         e.base_fare,
+              line_id: e.line,
+              mode: e.mode,
+              base_fare: e.base_fare,
               accepted_payments: e.accepted_payments,
               is_air_conditioned: e.is_air_conditioned,
-              open_time:         e.open_time,
-              close_time:        e.close_time,
-              crowd_factor:      e.crowd_factor,
-              reliability:       e.reliability,
-              stop_count:        stop_count
+              open_time: e.open_time,
+              close_time: e.close_time,
+              crowd_factor: e.crowd_factor,
+              reliability: e.reliability,
+              stop_count: stop_count
             }
           end
         end
@@ -45,18 +45,18 @@ module Api
 
         first_edge = edges.first
         json_response({
-          line_id:           line_id,
-          mode:              first_edge&.mode,
-          base_fare:         first_edge&.base_fare,
-          accepted_payments: first_edge&.accepted_payments,
-          is_air_conditioned: first_edge&.is_air_conditioned,
-          open_time:         first_edge&.open_time,
-          close_time:        first_edge&.close_time,
-          crowd_factor:      first_edge&.crowd_factor,
-          reliability:       first_edge&.reliability,
-          stations:          stations.map(&:as_api_json),
-          edges:             edges.map(&:as_api_json)
-        })
+                        line_id: line_id,
+                        mode: first_edge&.mode,
+                        base_fare: first_edge&.base_fare,
+                        accepted_payments: first_edge&.accepted_payments,
+                        is_air_conditioned: first_edge&.is_air_conditioned,
+                        open_time: first_edge&.open_time,
+                        close_time: first_edge&.close_time,
+                        crowd_factor: first_edge&.crowd_factor,
+                        reliability: first_edge&.reliability,
+                        stations: stations.map(&:as_api_json),
+                        edges: edges.map(&:as_api_json)
+                      })
       end
     end
   end

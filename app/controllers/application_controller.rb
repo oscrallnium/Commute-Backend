@@ -12,7 +12,7 @@ class ApplicationController < ActionController::API
   end
 
   def unprocessable(e)
-    render json: { error: "Unprocessable", errors: e.record.errors.full_messages }, status: :unprocessable_entity
+    render json: { error: "Unprocessable", errors: e.record.errors.full_messages }, status: :unprocessable_content
   end
 
   def bad_request(e)
@@ -22,9 +22,9 @@ class ApplicationController < ActionController::API
   def paginate_meta(pagy)
     {
       current_page: pagy.page,
-      total_pages:  pagy.pages,
-      total_count:  pagy.count,
-      per_page:     pagy.limit
+      total_pages: pagy.pages,
+      total_count: pagy.count,
+      per_page: pagy.limit
     }
   end
 end

@@ -6,13 +6,13 @@ module Api
       # Body: { origin_id, destination_id, legs, total_time_minutes, modes_used }
       def route_plan
         RoutePlanEvent.create!(
-          user_id:             current_user.id,
-          origin_station_id:   params[:origin_id],
+          user_id: current_user.id,
+          origin_station_id: params[:origin_id],
           destination_station_id: params[:destination_id],
-          legs:                params[:legs] || [],
-          total_time_minutes:  params[:total_time_minutes],
-          modes_used:          params[:modes_used] || [],
-          occurred_at:         Time.current
+          legs: params[:legs] || [],
+          total_time_minutes: params[:total_time_minutes],
+          modes_used: params[:modes_used] || [],
+          occurred_at: Time.current
         )
         render json: { message: "Logged" }, status: :created
       rescue => e

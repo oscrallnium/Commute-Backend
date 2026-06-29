@@ -16,7 +16,7 @@ module Api
             Rails.cache.delete("graph_version")
             render json: { data: result.data }, status: :created
           else
-            render json: { error: "Validation failed", errors: result.errors }, status: :unprocessable_entity
+            render json: { error: "Validation failed", errors: result.errors }, status: :unprocessable_content
           end
         end
 
@@ -30,7 +30,7 @@ module Api
             Rails.cache.delete("graph_version")
             render json: { data: result.data }, status: :ok
           else
-            render json: { error: "Delete failed", errors: result.errors }, status: :unprocessable_entity
+            render json: { error: "Delete failed", errors: result.errors }, status: :unprocessable_content
           end
         end
       end

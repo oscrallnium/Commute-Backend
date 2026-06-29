@@ -35,7 +35,7 @@ module Api
       def saved_route_params
         params.require(:saved_route).permit(
           :name, :origin_station_id, :destination_station_id,
-          legs: [:line_id, :mode, :from_station, :to_station, :travel_time_minutes]
+          legs: %i[line_id mode from_station to_station travel_time_minutes]
         )
       end
     end

@@ -3,18 +3,18 @@ Rails.application.routes.draw do
   get "/health", to: "health#show"
 
   devise_for :users,
-    path: "",
-    path_names: { sign_in: "auth/sign_in", sign_out: "auth/sign_out", registration: "auth/register" },
-    controllers: {
-      sessions:      "api/v1/auth/sessions",
-      registrations: "api/v1/auth/registrations"
-    }
+             path: "",
+             path_names: { sign_in: "auth/sign_in", sign_out: "auth/sign_out", registration: "auth/register" },
+             controllers: {
+               sessions: "api/v1/auth/sessions",
+               registrations: "api/v1/auth/registrations"
+             }
 
   namespace :api do
     namespace :v1 do
       # ── Auth extras ──────────────────────────────────────────────────────────
       post   "auth/refresh",         to: "auth/sessions#refresh"
-      delete "auth/account",         to: "auth/registrations#destroy"  # App Store requirement
+      delete "auth/account",         to: "auth/registrations#destroy" # App Store requirement
 
       # ── Current user ─────────────────────────────────────────────────────────
       get    "me",                   to: "users#me"
@@ -39,7 +39,7 @@ Rails.application.routes.draw do
       end
 
       # ── Analytics (iOS logs route plans here) ─────────────────────────────────
-      post   "analytics/route_plan", to: "analytics#route_plan"
+      post "analytics/route_plan", to: "analytics#route_plan"
 
       # ── Incidents (community-reported service disruptions) ────────────────────
       resources :incidents, only: %i[index create]

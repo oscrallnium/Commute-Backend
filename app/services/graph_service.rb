@@ -16,7 +16,7 @@ class GraphService
 
   EARTH_RADIUS_KM  = 6371.0
   AVG_SPEED_KMH    = 24.0
-  MIN_TRAVEL_TIME  = 2.0   # minutes
+  MIN_TRAVEL_TIME  = 2.0 # minutes
 
   LINE_ID_RE  = /\A[A-Z0-9_]+\z/
   TIME_RE     = /\A([01]\d|2[0-3]):[0-5]\d\z/
@@ -57,60 +57,60 @@ class GraphService
     edges      = []
 
     stops.each_with_index do |stop, i|
-      stop_name  = stop[:name]      || stop["name"]
-      stop_lat   = stop[:lat].to_f  || stop["lat"].to_f
-      stop_lng   = stop[:lng].to_f  || stop["lng"].to_f
+      stop_name  = stop[:name] || stop["name"]
+      stop_lat   = stop[:lat].to_f
+      stop_lng   = stop[:lng].to_f
       short_name = stop[:shortName] || stop["shortName"] || derive_short_name(stop_name)
       stop_id    = "#{line_id}_STOP#{i + 1}"
 
       stations << {
-        station_id:    stop_id,
-        name:          stop_name,
-        short_name:    short_name,
-        line:          line_id,
-        type:          mode,
-        lat:           stop_lat,
-        lng:           stop_lng,
-        is_terminal:   (i == 0 || i == stops.length - 1),
+        station_id: stop_id,
+        name: stop_name,
+        short_name: short_name,
+        line: line_id,
+        type: mode,
+        lat: stop_lat,
+        lng: stop_lng,
+        is_terminal: i.zero? || i == stops.length - 1,
         is_interchange: false,
-        amenities:     [],
-        open_time:     payload[:openTime]  || payload["openTime"]  || "05:00",
-        close_time:    payload[:closeTime] || payload["closeTime"] || "23:00",
-        created_at:    Time.current,
-        updated_at:    Time.current
+        amenities: [],
+        open_time: payload[:openTime] || payload["openTime"] || "05:00",
+        close_time: payload[:closeTime] || payload["closeTime"] || "23:00",
+        created_at: Time.current,
+        updated_at: Time.current
       }
 
       # Build edge from previous stop to this stop
-      next if i == 0
+      next if i.zero?
 
       prev_stop = stops[i - 1]
-      prev_lat  = prev_stop[:lat].to_f || prev_stop["lat"].to_f
-      prev_lng  = prev_stop[:lng].to_f || prev_stop["lng"].to_f
+      prev_lat  = prev_stop[:lat].to_f
+      prev_lng  = prev_stop[:lng].to_f
       dist_km   = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
       time_min  = travel_time_minutes(dist_km)
       edge_id   = "#{line_id}_SEG#{i}"
       from_id   = "#{line_id}_STOP#{i}"
 
       edges << {
-        edge_id:                      edge_id,
-        from_station:                 from_id,
-        to_station:                   stop_id,
-        mode:                         mode,
-        line:                         line_id,
-        travel_time_minutes:          time_min,
-        distance_km:                  dist_km,
-        base_fare:                    payload[:baseFare].to_f    || payload["baseFare"].to_f,
-        fare_per_km:                  payload[:farePerKm].to_f   || payload["farePerKm"].to_f,
-        accepted_payments:            payload[:acceptedPayments] || payload["acceptedPayments"] || [],
-        is_air_conditioned:           payload[:isAirConditioned] || payload["isAirConditioned"] || false,
-        crowd_factor:                 payload[:crowdFactor].to_f || payload["crowdFactor"].to_f,
-        reliability:                  payload[:reliability].to_f || payload["reliability"].to_f,
-        bidirectional:                true,
-        direction:                    nil,
-        polyline_coordinates:         [],
+        edge_id: edge_id,
+        from_station: from_id,
+        to_station: stop_id,
+        mode: mode,
+        line: line_id,
+        travel_time_minutes: time_min,
+        distance_km: dist_km,
+        base_fare: payload[:baseFare].to_f,
+        fare_per_km: payload[:farePerKm].to_f,
+        accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
+        is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
+        crowd_factor: payload[:crowdFactor].to_f,
+        reliability: payload[:reliability].to_f,
+        bidirectional: true,
+        direction: nil,
+        polyline_coordinates: [],
         mk_directions_transport_type: mk_type_for(mode),
-        created_at:                   Time.current,
-        updated_at:                   Time.current
+        created_at: Time.current,
+        updated_at: Time.current
       }
     end
 
@@ -132,9 +132,9 @@ class GraphService
     Result.new(
       success?: true,
       data: {
-        line_id:        line_id,
+        line_id: line_id,
         stations_added: stations.length,
-        edges_added:    edges.length
+        edges_added: edges.length
       }
     )
   rescue => e
@@ -183,20 +183,20 @@ class GraphService
     edges    = Edge.order(:line, :edge_id)
 
     {
-      version:      meta.version,
+      version: meta.version,
       lastModified: meta.last_modified.iso8601,
       metadata: {
-        region:        meta.region,
-        currency:      meta.currency,
+        region: meta.region,
+        currency: meta.currency,
         schemaVersion: meta.schema_version,
-        polylineNote:  "polylineCoordinates define the static display shape of each edge. Fixed — never changes with traffic."
+        polylineNote: "polylineCoordinates define the static display shape of each edge. Fixed — never changes with traffic."
       },
-      transportModes:      modes.each_with_object({}) { |m, h| h[m.id] = mode_json(m) },
-      paymentMethods:      payments.each_with_object({}) { |p, h| h[p.id] = payment_json(p) },
+      transportModes: modes.to_h { |m| [m.id, mode_json(m)] },
+      paymentMethods: payments.to_h { |p| [p.id, payment_json(p)] },
       peakHourMultipliers: peak&.data || {},
-      fareMatrix:          fares.each_with_object({}) { |f, h| h[f.line_name] = f.data },
-      stations:            stations.map { |s| station_json(s) },
-      edges:               edges.map    { |e| edge_json(e) }
+      fareMatrix: fares.to_h { |f| [f.line_name, f.data] },
+      stations: stations.map { |s| station_json(s) },
+      edges: edges.map { |e| edge_json(e) }
     }
   end
 
@@ -205,10 +205,10 @@ class GraphService
   def graph_version
     meta = GraphMeta.first!
     {
-      version:      meta.version,
+      version: meta.version,
       lastModified: meta.last_modified.iso8601,
       stationCount: Station.count,
-      edgeCount:    Edge.count
+      edgeCount: Edge.count
     }
   end
 
@@ -230,25 +230,34 @@ class GraphService
       errors << { field: "lineID", message: "Line ID must not contain spaces." }
     elsif line_id !~ LINE_ID_RE
       errors << { field: "lineID", message: "Line ID must only contain uppercase letters, digits, and underscores." }
-    elsif Station.where(line: line_id).exists?
+    elsif Station.exists?(line: line_id)
       errors << { field: "lineID", message: "Line ID '#{line_id}' already exists." }
     end
 
-    mode       = payload[:mode]      || payload["mode"]
+    mode = payload[:mode] || payload["mode"]
     valid_modes = TransportMode.pluck(:id)
-    errors << { field: "mode", message: "Mode '#{mode}' is invalid. Valid: #{valid_modes.join(', ')}." } unless valid_modes.include?(mode)
+    unless valid_modes.include?(mode)
+      errors << { field: "mode",
+                  message: "Mode '#{mode}' is invalid. Valid: #{valid_modes.join(", ")}." }
+    end
 
     base_fare = (payload[:baseFare] || payload["baseFare"]).to_f
-    errors << { field: "baseFare", message: "baseFare must be >= 0." } if base_fare < 0
+    errors << { field: "baseFare", message: "baseFare must be >= 0." } if base_fare.negative?
 
     fare_per_km = (payload[:farePerKm] || payload["farePerKm"]).to_f
-    errors << { field: "farePerKm", message: "farePerKm must be >= 0." } if fare_per_km < 0
+    errors << { field: "farePerKm", message: "farePerKm must be >= 0." } if fare_per_km.negative?
 
     crowd_factor = (payload[:crowdFactor] || payload["crowdFactor"]).to_f
-    errors << { field: "crowdFactor", message: "crowdFactor must be between 0 and 1." } unless (0.0..1.0).cover?(crowd_factor)
+    unless (0.0..1.0).cover?(crowd_factor)
+      errors << { field: "crowdFactor",
+                  message: "crowdFactor must be between 0 and 1." }
+    end
 
     reliability = (payload[:reliability] || payload["reliability"]).to_f
-    errors << { field: "reliability", message: "reliability must be between 0 and 1." } unless (0.0..1.0).cover?(reliability)
+    unless (0.0..1.0).cover?(reliability)
+      errors << { field: "reliability",
+                  message: "reliability must be between 0 and 1." }
+    end
 
     payments       = payload[:acceptedPayments] || payload["acceptedPayments"] || []
     valid_payments = PaymentMethod.pluck(:id)
@@ -256,13 +265,22 @@ class GraphService
       errors << { field: "acceptedPayments", message: "At least one payment method is required." }
     else
       invalid = payments - valid_payments
-      errors << { field: "acceptedPayments", message: "Unknown payment methods: #{invalid.join(', ')}." } if invalid.any?
+      if invalid.any?
+        errors << { field: "acceptedPayments",
+                    message: "Unknown payment methods: #{invalid.join(", ")}." }
+      end
     end
 
     open_time  = payload[:openTime]  || payload["openTime"]
     close_time = payload[:closeTime] || payload["closeTime"]
-    errors << { field: "openTime",  message: "openTime must be HH:mm format." }  if open_time.blank?  || open_time !~ TIME_RE
-    errors << { field: "closeTime", message: "closeTime must be HH:mm format." } if close_time.blank? || close_time !~ TIME_RE
+    if open_time.blank? || open_time !~ TIME_RE
+      errors << { field: "openTime",
+                  message: "openTime must be HH:mm format." }
+    end
+    if close_time.blank? || close_time !~ TIME_RE
+      errors << { field: "closeTime",
+                  message: "closeTime must be HH:mm format." }
+    end
 
     if stops.length < 2
       errors << { field: "stops", message: "At least 2 stops are required." }
@@ -270,12 +288,24 @@ class GraphService
       stops.each_with_index do |stop, i|
         lat = stop[:lat]&.to_f || stop["lat"]&.to_f
         lng = stop[:lng]&.to_f || stop["lng"]&.to_f
-        errors << { field: "stops[#{i}].name", message: "Stop #{i + 1}: name is required." } if (stop[:name] || stop["name"]).blank?
-        errors << { field: "stops[#{i}].lat",  message: "Stop #{i + 1}: lat must be between -90 and 90." } unless lat && (-90.0..90.0).cover?(lat)
-        errors << { field: "stops[#{i}].lng",  message: "Stop #{i + 1}: lng must be between -180 and 180." } unless lng && (-180.0..180.0).cover?(lng)
-        if lat && lng
-          in_mm = lat.between?(MM_LAT_MIN, MM_LAT_MAX) && lng.between?(MM_LNG_MIN, MM_LNG_MAX)
-          errors << { field: "stops[#{i}].coordinates", message: "Stop #{i + 1}: coordinates (#{lat}, #{lng}) appear outside Metro Manila." } unless in_mm
+        if (stop[:name] || stop["name"]).blank?
+          errors << { field: "stops[#{i}].name",
+                      message: "Stop #{i + 1}: name is required." }
+        end
+        unless lat && (-90.0..90.0).cover?(lat)
+          errors << { field: "stops[#{i}].lat",
+                      message: "Stop #{i + 1}: lat must be between -90 and 90." }
+        end
+        unless lng && (-180.0..180.0).cover?(lng)
+          errors << { field: "stops[#{i}].lng",
+                      message: "Stop #{i + 1}: lng must be between -180 and 180." }
+        end
+        next unless lat && lng
+
+        in_mm = lat.between?(MM_LAT_MIN, MM_LAT_MAX) && lng.between?(MM_LNG_MIN, MM_LNG_MAX)
+        unless in_mm
+          errors << { field: "stops[#{i}].coordinates",
+                      message: "Stop #{i + 1}: coordinates (#{lat}, #{lng}) appear outside Metro Manila." }
         end
       end
     end
@@ -288,10 +318,10 @@ class GraphService
   def haversine(lat1, lng1, lat2, lng2)
     d_lat = (lat2 - lat1) * Math::PI / 180
     d_lng = (lng2 - lng1) * Math::PI / 180
-    a = Math.sin(d_lat / 2)**2 +
-        Math.cos(lat1 * Math::PI / 180) *
+    a = (Math.sin(d_lat / 2)**2) +
+        (Math.cos(lat1 * Math::PI / 180) *
         Math.cos(lat2 * Math::PI / 180) *
-        Math.sin(d_lng / 2)**2
+        (Math.sin(d_lng / 2)**2))
     EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   end
 

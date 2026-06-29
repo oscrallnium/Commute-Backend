@@ -18,9 +18,7 @@ module Api
         # Returns a new token while revoking the current JTI.
         def refresh
           current_user = warden.authenticate(scope: :user)
-          unless current_user
-            return render json: { error: "Unauthorized" }, status: :unauthorized
-          end
+          return render json: { error: "Unauthorized" }, status: :unauthorized unless current_user
 
           # Rotate JTI — invalidates old token
           current_user.update_column(:jti, SecureRandom.uuid)
@@ -29,7 +27,7 @@ module Api
           render json: {
             data: {
               token: token,
-              user:  user_payload(current_user)
+              user: user_payload(current_user)
             }
           }, status: :ok
         end
@@ -42,7 +40,7 @@ module Api
             render json: {
               data: {
                 token: token,
-                user:  user_payload(resource)
+                user: user_payload(resource)
               }
             }, status: :ok
           else
@@ -62,10 +60,10 @@ module Api
 
         def user_payload(user)
           {
-            id:           user.id,
-            email:        user.email,
+            id: user.id,
+            email: user.email,
             display_name: user.display_name,
-            role:         user.role
+            role: user.role
           }
         end
       end
