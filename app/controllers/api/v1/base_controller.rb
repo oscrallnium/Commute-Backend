@@ -1,8 +1,6 @@
 module Api
   module V1
     class BaseController < ApplicationController
-      include Devise::JWT::RevocationStrategies::JTIMatcher
-
       before_action :authenticate_user!
 
       respond_to :json
