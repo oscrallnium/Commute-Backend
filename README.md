@@ -42,7 +42,7 @@ The iOS client runs the A* routing algorithm on-device. Rails handles everything
 |---|---|
 | Ruby | 3.4.1 |
 | Rails | 7.1 |
-| PostgreSQL | 14+ |
+| PostgreSQL | 16+ |
 | Redis | 7+ |
 | Bundler | 2+ |
 
@@ -112,7 +112,7 @@ openssl rand -hex 64        # paste output into DEVISE_JWT_SECRET_KEY
 Make sure Postgres is running locally. On macOS with Homebrew:
 
 ```bash
-brew services start postgresql@14
+brew services start postgresql@16
 ```
 
 Or use [Postgres.app](https://postgresapp.com/) — just ensure it's running on port 5432.
