@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: commutebeh_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ["5432:5432"]
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/commutebeh_test
+      DEVISE_JWT_SECRET_KEY: test_secret_key_at_least_64_chars_long_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      SECRET_KEY_BASE: test_secret_key_base_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      RAILS_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      - name: Setup database
+        run: bundle exec rails db:create db:migrate
+
+      - name: Run tests
+        run: bundle exec rspec --format progress
+
+      - name: Lint
+        run: bundle exec rubocop --parallel
