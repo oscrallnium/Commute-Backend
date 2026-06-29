@@ -53,6 +53,7 @@ Rails.application.routes.draw do
         resources :users,         only: %i[index show destroy]
         resources :ar_world_maps, only: %i[index show update destroy]
         resources :incidents,     only: %i[index update destroy]
+        resources :stations,      only: %i[update]
         get    "analytics/summary",      to: "analytics#summary"
         get    "analytics/hotspots",     to: "analytics#hotspots"
         post   "graph/routes",           to: "graph#create_route"
