@@ -237,6 +237,54 @@ Exceeded limits return `429` with `{ "error": "Too many requests. Please try aga
 
 ---
 
+## Viewing the database in TablePlus
+
+[TablePlus](https://tableplus.com) is a GUI for browsing and editing your local Postgres database.
+
+### Local database
+
+1. Open TablePlus and click **Create a new connection → PostgreSQL**.
+2. Fill in the fields:
+
+   | Field | Value |
+   |---|---|
+   | Name | `commutebeh-dev` (or anything you like) |
+   | Host | `127.0.0.1` |
+   | Port | `5432` |
+   | User | `postgres` (or your local Postgres user) |
+   | Password | your local Postgres password |
+   | Database | `commutebeh_development` |
+
+3. Click **Test** — you should see a green connection indicator.
+4. Click **Connect**.
+
+> If you used `DATABASE_URL` in `.env`, you can paste the full URL directly into the **URL** field in TablePlus instead of filling each field individually.
+
+### Supabase (production / staging) database
+
+1. Go to your [Supabase dashboard](https://supabase.com/dashboard) → select your project → **Settings → Database**.
+2. Under **Connection string**, copy the **URI** (use the `Session mode` one on port `5432`, not the transaction pooler).
+3. In TablePlus, click **Create a new connection → PostgreSQL**, paste the URI into the **URL** field, and click **Connect**.
+
+> The Supabase connection string looks like:
+> `postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres`
+
+### Key tables to know
+
+| Table | What's in it |
+|---|---|
+| `users` | Registered accounts, roles, JTI tokens |
+| `stations` | Transit stations (seeded by Hono) |
+| `edges` | Transit graph edges (seeded by Hono) |
+| `saved_routes` | User-bookmarked commutes |
+| `ar_world_maps` | AR map metadata + relocalization logs |
+| `route_plan_events` | iOS A* analytics logs |
+| `incidents` | Community-reported service disruptions |
+| `graph_meta` | Transit graph version info |
+| `active_storage_blobs` | File upload records (AR maps) |
+
+---
+
 ## Running tests
 
 ```bash
