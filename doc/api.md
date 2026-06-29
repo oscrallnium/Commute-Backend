@@ -487,20 +487,6 @@ Call this after every successful A* route computation on-device. This call **nev
 
 ---
 
-## Health Check
-
-```
-GET /health
-```
-No auth required. Used by uptime monitors.
-
-**Response `200`:**
-```json
-{ "status": "ok", "database": "connected" }
-```
-
----
-
 ## Error format
 
 All errors follow this shape:
@@ -512,7 +498,6 @@ All errors follow this shape:
 |---|---|
 | `400` | Bad request / missing params |
 | `401` | Missing or invalid token |
-| `403` | Insufficient role (admin required) |
 | `404` | Record not found |
 | `422` | Validation failed |
 | `429` | Rate limit exceeded |
