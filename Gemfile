@@ -21,8 +21,9 @@ gem "aws-sdk-s3", require: false
 # Pagination
 gem "pagy", "~> 6.0"
 
-# Background jobs
+# Background jobs + cache
 gem "sidekiq", "~> 7.0"
+gem "redis", "~> 5.0"
 
 # Rate limiting
 gem "rack-attack"
