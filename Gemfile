@@ -24,6 +24,7 @@ gem "pagy", "~> 6.0"
 # Background jobs + cache
 gem "sidekiq", "~> 7.0"
 gem "redis", "~> 5.0"
+gem "connection_pool", "< 3.0"
 
 # Rate limiting
 gem "rack-attack"
