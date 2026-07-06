@@ -1,9 +1,10 @@
 class ApplicationController < ActionController::API
   include Pagy::Backend
 
-  rescue_from ActiveRecord::RecordNotFound,      with: :not_found
-  rescue_from ActiveRecord::RecordInvalid,       with: :unprocessable
-  rescue_from ActionController::ParameterMissing, with: :bad_request
+  rescue_from ActiveRecord::RecordNotFound,        with: :not_found
+  rescue_from ActiveRecord::RecordInvalid,         with: :unprocessable
+  rescue_from ActionController::ParameterMissing,  with: :bad_request
+  rescue_from ActiveRecord::StatementInvalid,      with: :statement_invalid
 
   private
 
@@ -17,6 +18,11 @@ class ApplicationController < ActionController::API
 
   def bad_request(e)
     render json: { error: "Bad request", message: e.message }, status: :bad_request
+  end
+
+  def statement_invalid(e)
+    Rails.logger.error("[db] StatementInvalid: #{e.message}")
+    render json: { error: "Internal server error" }, status: :internal_server_error
   end
 
   def paginate_meta(pagy)

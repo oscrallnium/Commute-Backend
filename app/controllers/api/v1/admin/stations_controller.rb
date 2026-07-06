@@ -25,7 +25,11 @@ module Api
         end
 
         def station_params
-          params.require(:station).permit(:lat, :lng)
+          raw = params.require(:station).permit(:lat, :lng, :latitude, :longitude)
+          {
+            lat: raw[:latitude] || raw[:lat],
+            lng: raw[:longitude] || raw[:lng]
+          }.compact
         end
       end
     end

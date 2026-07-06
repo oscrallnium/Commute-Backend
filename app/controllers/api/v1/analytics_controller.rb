@@ -2,16 +2,17 @@ module Api
   module V1
     class AnalyticsController < BaseController
       # POST /api/v1/analytics/route_plan
-      # iOS calls this after a successful A* run
-      # Body: { origin_id, destination_id, legs, total_time_minutes, modes_used }
+      # iOS body: { event: { origin_station_id, destination_station_id, line_ids, duration_seconds } }
       def route_plan
+        ev = params[:event] || {}
+        duration_secs = ev[:duration_seconds].to_i
         RoutePlanEvent.create!(
           user_id: current_user.id,
-          origin_station_id: params[:origin_id],
-          destination_station_id: params[:destination_id],
-          legs: params[:legs] || [],
-          total_time_minutes: params[:total_time_minutes],
-          modes_used: params[:modes_used] || [],
+          origin_station_id: ev[:origin_station_id],
+          destination_station_id: ev[:destination_station_id],
+          legs: [],
+          total_time_minutes: duration_secs > 0 ? (duration_secs / 60.0).ceil : nil,
+          modes_used: Array(ev[:line_ids]),
           occurred_at: Time.current
         )
         render json: { message: "Logged" }, status: :created
