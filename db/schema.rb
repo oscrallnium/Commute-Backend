@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 9) do
+ActiveRecord::Schema[7.2].define(version: 10) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -100,6 +100,7 @@ ActiveRecord::Schema[7.2].define(version: 9) do
     t.string "schema_version", default: "3.0.0", null: false
     t.string "region", default: "Metro Manila, Philippines", null: false
     t.string "currency", default: "PHP", null: false
+    t.boolean "enforce_operating_hours", default: true, null: false
   end
 
   create_table "incidents", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|

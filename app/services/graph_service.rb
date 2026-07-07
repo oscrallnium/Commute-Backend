@@ -185,6 +185,7 @@ class GraphService
     {
       version: meta.version,
       lastModified: meta.last_modified.iso8601,
+      enforceOperatingHours: meta.enforce_operating_hours,
       metadata: {
         region: meta.region,
         currency: meta.currency,

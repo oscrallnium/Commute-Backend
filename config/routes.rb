@@ -59,6 +59,8 @@ Rails.application.routes.draw do
         get    "analytics/hotspots",     to: "analytics#hotspots"
         post   "graph/routes",           to: "graph#create_route"
         delete "graph/routes/:line_id",  to: "graph#delete_route"
+        get    "settings",               to: "settings#show"
+        patch  "settings",               to: "settings#update"
       end
     end
   end
