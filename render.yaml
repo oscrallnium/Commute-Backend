@@ -5,7 +5,8 @@ services:
     region: singapore
     plan: starter
     buildCommand: bundle install
-    startCommand: bundle exec rails db:migrate && bundle exec puma -C config/puma.rb
+    preDeployCommand: bundle exec rails db:migrate
+    startCommand: bundle exec puma -C config/puma.rb
     healthCheckPath: /health
     envVars:
       - key: RAILS_ENV
