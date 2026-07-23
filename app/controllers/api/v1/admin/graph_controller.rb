@@ -16,7 +16,11 @@ module Api
             Rails.cache.delete("graph_version")
             render json: { data: result.data }, status: :created
           else
-            render json: { error: "Validation failed", errors: result.errors }, status: :unprocessable_content
+            # Flatten {field:, message:} structs to plain strings — every other endpoint's
+            # `errors` array is `model.errors.full_messages` (an array of strings), and the
+            # client's ErrorResponse decoder expects that shape.
+            render json: { error: "Validation failed", errors: result.errors.map { |e| e[:message] } },
+                   status: :unprocessable_content
           end
         end
 
@@ -30,7 +34,8 @@ module Api
             Rails.cache.delete("graph_version")
             render json: { data: result.data }, status: :ok
           else
-            render json: { error: "Delete failed", errors: result.errors }, status: :unprocessable_content
+            render json: { error: "Delete failed", errors: result.errors.map { |e| e[:message] } },
+                   status: :unprocessable_content
           end
         end
       end

@@ -86,10 +86,29 @@ class GraphService
       prev_stop = stops[i - 1]
       prev_lat  = prev_stop[:lat].to_f
       prev_lng  = prev_stop[:lng].to_f
-      dist_km   = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
-      time_min  = travel_time_minutes(dist_km)
       edge_id   = "#{line_id}_SEG#{i}"
       from_id   = "#{line_id}_STOP#{i}"
+
+      # Optional per-segment polyline (road-following points from the client, e.g. an
+      # MKDirections-snapped trace) — when present, use its actual length instead of the
+      # prev/current stop haversine chord, and persist the points instead of discarding
+      # them. Falls back to a straight two-point chord for callers that don't send one
+      # (existing web-admin payloads keep working unchanged).
+      raw_polyline = stop[:polyline] || stop["polyline"] || []
+      poly_points = raw_polyline.filter_map do |p|
+        lat = p[:lat] || p["lat"]
+        lng = p[:lng] || p["lng"]
+        next if lat.nil? || lng.nil?
+        { lat: lat.to_f, lng: lng.to_f }
+      end
+
+      if poly_points.length >= 2
+        dist_km = poly_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
+      else
+        poly_points = []
+        dist_km = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
+      end
+      time_min = travel_time_minutes(dist_km)
 
       edges << {
         edge_id: edge_id,
@@ -107,7 +126,57 @@ class GraphService
         reliability: payload[:reliability].to_f,
         bidirectional: true,
         direction: nil,
-        polyline_coordinates: [],
+        polyline_coordinates: poly_points,
+        mk_directions_transport_type: mk_type_for(mode),
+        created_at: Time.current,
+        updated_at: Time.current
+      }
+    end
+
+    # Loop Creator always records a closed loop (last stop connects back to the first).
+    # add_route otherwise only chains consecutive stops, so without this the recorded
+    # closing segment — and the fact that the route is a loop at all — is silently lost.
+    closes_loop = payload[:closesLoop] || payload["closesLoop"]
+    if closes_loop && stops.length >= 2
+      first_stop = stops.first
+      last_stop  = stops.last
+      first_lat  = (first_stop[:lat] || first_stop["lat"]).to_f
+      first_lng  = (first_stop[:lng] || first_stop["lng"]).to_f
+      last_lat   = (last_stop[:lat]  || last_stop["lat"]).to_f
+      last_lng   = (last_stop[:lng]  || last_stop["lng"]).to_f
+
+      raw_closing = payload[:closingPolyline] || payload["closingPolyline"] || []
+      closing_points = raw_closing.filter_map do |p|
+        lat = p[:lat] || p["lat"]
+        lng = p[:lng] || p["lng"]
+        next if lat.nil? || lng.nil?
+        { lat: lat.to_f, lng: lng.to_f }
+      end
+
+      if closing_points.length >= 2
+        closing_dist = closing_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
+      else
+        closing_points = []
+        closing_dist = haversine(last_lat, last_lng, first_lat, first_lng)
+      end
+
+      edges << {
+        edge_id: "#{line_id}_SEG#{stops.length}",
+        from_station: "#{line_id}_STOP#{stops.length}",
+        to_station: "#{line_id}_STOP1",
+        mode: mode,
+        line: line_id,
+        travel_time_minutes: travel_time_minutes(closing_dist),
+        distance_km: closing_dist,
+        base_fare: payload[:baseFare].to_f,
+        fare_per_km: payload[:farePerKm].to_f,
+        accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
+        is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
+        crowd_factor: payload[:crowdFactor].to_f,
+        reliability: payload[:reliability].to_f,
+        bidirectional: true,
+        direction: nil,
+        polyline_coordinates: closing_points,
         mk_directions_transport_type: mk_type_for(mode),
         created_at: Time.current,
         updated_at: Time.current
@@ -307,6 +376,18 @@ class GraphService
         unless in_mm
           errors << { field: "stops[#{i}].coordinates",
                       message: "Stop #{i + 1}: coordinates (#{lat}, #{lng}) appear outside Metro Manila." }
+        end
+
+        polyline = stop[:polyline] || stop["polyline"]
+        next unless polyline.present?
+
+        polyline.each_with_index do |p, j|
+          p_lat = p[:lat]&.to_f || p["lat"]&.to_f
+          p_lng = p[:lng]&.to_f || p["lng"]&.to_f
+          unless p_lat && (-90.0..90.0).cover?(p_lat) && p_lng && (-180.0..180.0).cover?(p_lng)
+            errors << { field: "stops[#{i}].polyline[#{j}]",
+                        message: "Stop #{i + 1}: polyline point #{j + 1} has an invalid coordinate." }
+          end
         end
       end
     end
