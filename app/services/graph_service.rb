@@ -44,100 +44,130 @@ class GraphService
     new.graph_version
   end
 
+  # Public entry point for controllers that mutate a single station/edge outside
+  # add_route/delete_route (e.g. EdgesController#update) and need to bump the
+  # version themselves. add_route/delete_route call the private instance method
+  # directly since they already run inside their own transaction.
+  def self.bump_version!
+    new.send(:bump_graph_version!)
+  end
+
+  # Haversine distance (km) summed over consecutive polyline points. Public so
+  # controllers can recompute distance_km when a client overwrites polyline_coordinates.
+  def self.polyline_distance_km(points)
+    new.send(:polyline_distance_km, points)
+  end
+
   # ── add_route ───────────────────────────────────────────────────────────────
 
   def add_route(payload)
     errors = validate(payload)
     return Result.new(success?: false, errors: errors) if errors.any?
 
-    stops      = payload[:stops] || payload["stops"] || []
-    line_id    = payload[:lineID] || payload["lineID"]
-    mode       = payload[:mode]   || payload["mode"]
-    stations   = []
-    edges      = []
+    passes   = normalize_passes(payload)
+    line_id  = payload[:lineID] || payload["lineID"]
+    mode     = payload[:mode]   || payload["mode"]
+    stations = []
+    edges    = []
 
-    stops.each_with_index do |stop, i|
-      stop_name  = stop[:name] || stop["name"]
-      stop_lat   = stop[:lat].to_f
-      stop_lng   = stop[:lng].to_f
-      short_name = stop[:shortName] || stop["shortName"] || derive_short_name(stop_name)
-      stop_id    = "#{line_id}_STOP#{i + 1}"
+    passes.each do |pass|
+      direction = pass[:direction]
+      stops     = pass[:stops]
+      # A direction-less pass keeps the original unscoped IDs (`LINE_STOP1`, `LINE_SEG1`)
+      # so existing routes/web-admin payloads are unaffected. A northbound/southbound
+      # pass gets its own ID namespace (`LINE_NB_STOP1`) since those stops are modeled as
+      # independent stations (real jeepney/bus stops on opposite one-way streets usually
+      # sit at different corners) — this also lets both passes coexist under one lineID
+      # without station_id collisions.
+      tag       = direction_tag(direction)
+      id_prefix = tag ? "#{line_id}_#{tag}" : line_id
 
-      stations << {
-        station_id: stop_id,
-        name: stop_name,
-        short_name: short_name,
-        line: line_id,
-        type: mode,
-        lat: stop_lat,
-        lng: stop_lng,
-        is_terminal: i.zero? || i == stops.length - 1,
-        is_interchange: false,
-        amenities: [],
-        open_time: payload[:openTime] || payload["openTime"] || "05:00",
-        close_time: payload[:closeTime] || payload["closeTime"] || "23:00",
-        created_at: Time.current,
-        updated_at: Time.current
-      }
+      stops.each_with_index do |stop, i|
+        stop_name  = stop[:name] || stop["name"]
+        stop_lat   = stop[:lat].to_f
+        stop_lng   = stop[:lng].to_f
+        short_name = stop[:shortName] || stop["shortName"] || derive_short_name(stop_name)
+        stop_id    = "#{id_prefix}_STOP#{i + 1}"
 
-      # Build edge from previous stop to this stop
-      next if i.zero?
+        stations << {
+          station_id: stop_id,
+          name: stop_name,
+          short_name: short_name,
+          line: line_id,
+          type: mode,
+          lat: stop_lat,
+          lng: stop_lng,
+          is_terminal: i.zero? || i == stops.length - 1,
+          is_interchange: false,
+          amenities: [],
+          open_time: payload[:openTime] || payload["openTime"] || "05:00",
+          close_time: payload[:closeTime] || payload["closeTime"] || "23:00",
+          created_at: Time.current,
+          updated_at: Time.current
+        }
 
-      prev_stop = stops[i - 1]
-      prev_lat  = prev_stop[:lat].to_f
-      prev_lng  = prev_stop[:lng].to_f
-      edge_id   = "#{line_id}_SEG#{i}"
-      from_id   = "#{line_id}_STOP#{i}"
+        # Build edge from previous stop to this stop
+        next if i.zero?
 
-      # Optional per-segment polyline (road-following points from the client, e.g. an
-      # MKDirections-snapped trace) — when present, use its actual length instead of the
-      # prev/current stop haversine chord, and persist the points instead of discarding
-      # them. Falls back to a straight two-point chord for callers that don't send one
-      # (existing web-admin payloads keep working unchanged).
-      raw_polyline = stop[:polyline] || stop["polyline"] || []
-      poly_points = raw_polyline.filter_map do |p|
-        lat = p[:lat] || p["lat"]
-        lng = p[:lng] || p["lng"]
-        next if lat.nil? || lng.nil?
-        { lat: lat.to_f, lng: lng.to_f }
+        prev_stop = stops[i - 1]
+        prev_lat  = prev_stop[:lat].to_f
+        prev_lng  = prev_stop[:lng].to_f
+        edge_id   = "#{id_prefix}_SEG#{i}"
+        from_id   = "#{id_prefix}_STOP#{i}"
+
+        # Optional per-segment polyline (road-following points from the client, e.g. an
+        # MKDirections-snapped trace) — when present, use its actual length instead of the
+        # prev/current stop haversine chord, and persist the points instead of discarding
+        # them. Falls back to a straight two-point chord for callers that don't send one
+        # (existing web-admin payloads keep working unchanged).
+        raw_polyline = stop[:polyline] || stop["polyline"] || []
+        poly_points = raw_polyline.filter_map do |p|
+          lat = p[:lat] || p["lat"]
+          lng = p[:lng] || p["lng"]
+          next if lat.nil? || lng.nil?
+          { lat: lat.to_f, lng: lng.to_f }
+        end
+
+        if poly_points.length >= 2
+          dist_km = poly_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
+        else
+          poly_points = []
+          dist_km = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
+        end
+        time_min = travel_time_minutes(dist_km)
+
+        edges << {
+          edge_id: edge_id,
+          from_station: from_id,
+          to_station: stop_id,
+          mode: mode,
+          line: line_id,
+          travel_time_minutes: time_min,
+          distance_km: dist_km,
+          base_fare: payload[:baseFare].to_f,
+          fare_per_km: payload[:farePerKm].to_f,
+          accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
+          is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
+          crowd_factor: payload[:crowdFactor].to_f,
+          reliability: payload[:reliability].to_f,
+          # A directional pass is a one-way leg — no synthetic reverse edge should ever be
+          # inferred from it, so bidirectional is false whenever a direction is set. A
+          # direction-less pass keeps today's behavior (bidirectional true, no direction).
+          bidirectional: direction.nil?,
+          direction: direction,
+          polyline_coordinates: poly_points,
+          mk_directions_transport_type: mk_type_for(mode),
+          created_at: Time.current,
+          updated_at: Time.current
+        }
       end
 
-      if poly_points.length >= 2
-        dist_km = poly_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
-      else
-        poly_points = []
-        dist_km = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
-      end
-      time_min = travel_time_minutes(dist_km)
+      # Closing (loop-back) segment — only meaningful for a direction-less pass (a
+      # northbound/southbound leg is inherently one-way, so the client never sends
+      # closesLoop for those); honored here regardless of direction since nothing
+      # downstream assumes otherwise.
+      next unless pass[:closes_loop] && stops.length >= 2
 
-      edges << {
-        edge_id: edge_id,
-        from_station: from_id,
-        to_station: stop_id,
-        mode: mode,
-        line: line_id,
-        travel_time_minutes: time_min,
-        distance_km: dist_km,
-        base_fare: payload[:baseFare].to_f,
-        fare_per_km: payload[:farePerKm].to_f,
-        accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
-        is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
-        crowd_factor: payload[:crowdFactor].to_f,
-        reliability: payload[:reliability].to_f,
-        bidirectional: true,
-        direction: nil,
-        polyline_coordinates: poly_points,
-        mk_directions_transport_type: mk_type_for(mode),
-        created_at: Time.current,
-        updated_at: Time.current
-      }
-    end
-
-    # Loop Creator always records a closed loop (last stop connects back to the first).
-    # add_route otherwise only chains consecutive stops, so without this the recorded
-    # closing segment — and the fact that the route is a loop at all — is silently lost.
-    closes_loop = payload[:closesLoop] || payload["closesLoop"]
-    if closes_loop && stops.length >= 2
       first_stop = stops.first
       last_stop  = stops.last
       first_lat  = (first_stop[:lat] || first_stop["lat"]).to_f
@@ -145,8 +175,7 @@ class GraphService
       last_lat   = (last_stop[:lat]  || last_stop["lat"]).to_f
       last_lng   = (last_stop[:lng]  || last_stop["lng"]).to_f
 
-      raw_closing = payload[:closingPolyline] || payload["closingPolyline"] || []
-      closing_points = raw_closing.filter_map do |p|
+      closing_points = pass[:closing_polyline].filter_map do |p|
         lat = p[:lat] || p["lat"]
         lng = p[:lng] || p["lng"]
         next if lat.nil? || lng.nil?
@@ -161,9 +190,9 @@ class GraphService
       end
 
       edges << {
-        edge_id: "#{line_id}_SEG#{stops.length}",
-        from_station: "#{line_id}_STOP#{stops.length}",
-        to_station: "#{line_id}_STOP1",
+        edge_id: "#{id_prefix}_SEG#{stops.length}",
+        from_station: "#{id_prefix}_STOP#{stops.length}",
+        to_station: "#{id_prefix}_STOP1",
         mode: mode,
         line: line_id,
         travel_time_minutes: travel_time_minutes(closing_dist),
@@ -174,8 +203,8 @@ class GraphService
         is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
         crowd_factor: payload[:crowdFactor].to_f,
         reliability: payload[:reliability].to_f,
-        bidirectional: true,
-        direction: nil,
+        bidirectional: direction.nil?,
+        direction: direction,
         polyline_coordinates: closing_points,
         mk_directions_transport_type: mk_type_for(mode),
         created_at: Time.current,
@@ -288,7 +317,7 @@ class GraphService
 
   def validate(payload)
     errors = []
-    stops  = payload[:stops] || payload["stops"] || []
+    passes = normalize_passes(payload)
 
     display_name = payload[:displayName] || payload["displayName"]
     errors << { field: "displayName", message: "Display name is required." } if display_name.blank?
@@ -352,47 +381,91 @@ class GraphService
                   message: "closeTime must be HH:mm format." }
     end
 
-    if stops.length < 2
-      errors << { field: "stops", message: "At least 2 stops are required." }
-    else
-      stops.each_with_index do |stop, i|
-        lat = stop[:lat]&.to_f || stop["lat"]&.to_f
-        lng = stop[:lng]&.to_f || stop["lng"]&.to_f
-        if (stop[:name] || stop["name"]).blank?
-          errors << { field: "stops[#{i}].name",
-                      message: "Stop #{i + 1}: name is required." }
-        end
-        unless lat && (-90.0..90.0).cover?(lat)
-          errors << { field: "stops[#{i}].lat",
-                      message: "Stop #{i + 1}: lat must be between -90 and 90." }
-        end
-        unless lng && (-180.0..180.0).cover?(lng)
-          errors << { field: "stops[#{i}].lng",
-                      message: "Stop #{i + 1}: lng must be between -180 and 180." }
-        end
-        next unless lat && lng
+    seen_directions = []
+    passes.each_with_index do |pass, p_idx|
+      direction = pass[:direction]
+      stops     = pass[:stops]
+      label     = direction ? "#{direction} pass" : (passes.length > 1 ? "pass #{p_idx + 1}" : "route")
 
-        in_mm = lat.between?(MM_LAT_MIN, MM_LAT_MAX) && lng.between?(MM_LNG_MIN, MM_LNG_MAX)
-        unless in_mm
-          errors << { field: "stops[#{i}].coordinates",
-                      message: "Stop #{i + 1}: coordinates (#{lat}, #{lng}) appear outside Metro Manila." }
-        end
+      unless direction.nil? || %w[northbound southbound].include?(direction)
+        errors << { field: "passes[#{p_idx}].direction",
+                    message: "direction must be \"northbound\", \"southbound\", or omitted." }
+      end
 
-        polyline = stop[:polyline] || stop["polyline"]
-        next unless polyline.present?
+      if direction && seen_directions.include?(direction)
+        errors << { field: "passes[#{p_idx}].direction",
+                    message: "Direction '#{direction}' was submitted more than once." }
+      end
+      seen_directions << direction if direction
 
-        polyline.each_with_index do |p, j|
-          p_lat = p[:lat]&.to_f || p["lat"]&.to_f
-          p_lng = p[:lng]&.to_f || p["lng"]&.to_f
-          unless p_lat && (-90.0..90.0).cover?(p_lat) && p_lng && (-180.0..180.0).cover?(p_lng)
-            errors << { field: "stops[#{i}].polyline[#{j}]",
-                        message: "Stop #{i + 1}: polyline point #{j + 1} has an invalid coordinate." }
+      if stops.length < 2
+        errors << { field: "passes[#{p_idx}].stops", message: "#{label.capitalize}: at least 2 stops are required." }
+      else
+        stops.each_with_index do |stop, i|
+          lat = stop[:lat]&.to_f || stop["lat"]&.to_f
+          lng = stop[:lng]&.to_f || stop["lng"]&.to_f
+          if (stop[:name] || stop["name"]).blank?
+            errors << { field: "passes[#{p_idx}].stops[#{i}].name",
+                        message: "#{label.capitalize}, stop #{i + 1}: name is required." }
+          end
+          unless lat && (-90.0..90.0).cover?(lat)
+            errors << { field: "passes[#{p_idx}].stops[#{i}].lat",
+                        message: "#{label.capitalize}, stop #{i + 1}: lat must be between -90 and 90." }
+          end
+          unless lng && (-180.0..180.0).cover?(lng)
+            errors << { field: "passes[#{p_idx}].stops[#{i}].lng",
+                        message: "#{label.capitalize}, stop #{i + 1}: lng must be between -180 and 180." }
+          end
+          next unless lat && lng
+
+          in_mm = lat.between?(MM_LAT_MIN, MM_LAT_MAX) && lng.between?(MM_LNG_MIN, MM_LNG_MAX)
+          unless in_mm
+            errors << { field: "passes[#{p_idx}].stops[#{i}].coordinates",
+                        message: "#{label.capitalize}, stop #{i + 1}: coordinates (#{lat}, #{lng}) appear outside Metro Manila." }
+          end
+
+          polyline = stop[:polyline] || stop["polyline"]
+          next unless polyline.present?
+
+          polyline.each_with_index do |p, j|
+            p_lat = p[:lat]&.to_f || p["lat"]&.to_f
+            p_lng = p[:lng]&.to_f || p["lng"]&.to_f
+            unless p_lat && (-90.0..90.0).cover?(p_lat) && p_lng && (-180.0..180.0).cover?(p_lng)
+              errors << { field: "passes[#{p_idx}].stops[#{i}].polyline[#{j}]",
+                          message: "#{label.capitalize}, stop #{i + 1}: polyline point #{j + 1} has an invalid coordinate." }
+            end
           end
         end
       end
     end
 
     errors
+  end
+
+  # Accepts either the new multi-pass shape (`passes: [{direction:, stops:, closesLoop:,
+  # closingPolyline:}, ...]` — used by the iOS Loop Creator to submit an optional
+  # northbound + southbound pair in one call) or the legacy flat shape (top-level
+  # `stops`/`closesLoop`/`closingPolyline`/`direction`, still sent by the web admin) —
+  # wrapped here into a single implicit pass so both shapes flow through identical code.
+  def normalize_passes(payload)
+    raw_passes = payload[:passes] || payload["passes"]
+    raw_passes = [
+      {
+        direction: payload[:direction] || payload["direction"],
+        stops: payload[:stops] || payload["stops"] || [],
+        closesLoop: payload[:closesLoop] || payload["closesLoop"],
+        closingPolyline: payload[:closingPolyline] || payload["closingPolyline"]
+      }
+    ] if raw_passes.blank?
+
+    raw_passes.map do |pass|
+      {
+        direction: pass[:direction] || pass["direction"],
+        stops: pass[:stops] || pass["stops"] || [],
+        closes_loop: pass[:closesLoop] || pass["closesLoop"],
+        closing_polyline: pass[:closingPolyline] || pass["closingPolyline"] || []
+      }
+    end
   end
 
   # ── Haversine — direct port of geo.ts ─────────────────────────────────────
@@ -411,6 +484,18 @@ class GraphService
     [MIN_TRAVEL_TIME, dist_km / (AVG_SPEED_KMH / 60.0)].max
   end
 
+  def polyline_distance_km(points)
+    pts = points.filter_map do |p|
+      lat = p[:lat] || p["lat"]
+      lng = p[:lng] || p["lng"]
+      next if lat.nil? || lng.nil?
+      { lat: lat.to_f, lng: lng.to_f }
+    end
+    return nil if pts.length < 2
+
+    pts.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
+  end
+
   def derive_short_name(name)
     name.to_s.strip.split.first.to_s[0, 6].upcase
   end
@@ -418,6 +503,10 @@ class GraphService
   def mk_type_for(mode)
     { "train" => "train", "bus" => "bus", "jeepney" => "automobile",
       "e_jeepney" => "automobile", "tricycle" => "automobile" }.fetch(mode, "transit")
+  end
+
+  def direction_tag(direction)
+    { "northbound" => "NB", "southbound" => "SB" }[direction]
   end
 
   def bump_graph_version!

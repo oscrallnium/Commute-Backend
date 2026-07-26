@@ -7,7 +7,18 @@ module Api
 
         # PATCH /api/v1/admin/edges/:id
         def update
-          if @edge.update(edge_params)
+          attrs = edge_params
+          # Trust the server's own math over whatever the client computed, same as
+          # everywhere else in GraphService. Never touches travel_time_minutes — the
+          # generic AVG_SPEED_KMH=24 road-traffic constant would badly misstate a
+          # train's real (scheduled, dwell-time-inclusive) travel time.
+          if attrs[:polyline_coordinates]
+            recomputed = GraphService.polyline_distance_km(attrs[:polyline_coordinates])
+            attrs[:distance_km] = recomputed if recomputed
+          end
+
+          if @edge.update(attrs)
+            GraphService.bump_version!
             Rails.cache.delete("full_graph")
             Rails.cache.delete("graph_version")
             render json: { data: @edge.as_api_json }, status: :ok
