@@ -8,7 +8,12 @@ module Api
         # Adds a new route to the transit graph.
         # Body matches the Hono RoutePayload shape exactly — web admin needs no changes.
         def create_route
-          result = GraphService.add_route(request.parsed_body || params.to_unsafe_h)
+          # NOTE: `request.parsed_body` is NOT a real ActionDispatch::Request method in a
+          # live controller — it only exists on Rails' test-harness request/response
+          # classes (action_controller/test_case.rb etc.), used for asserting on a test
+          # *response* body. Calling it here always raised NoMethodError, on every single
+          # request, regardless of payload — `params` already has the parsed JSON body.
+          result = GraphService.add_route(params.to_unsafe_h)
 
           if result.success?
             # Bust graph cache so next iOS poll gets fresh data

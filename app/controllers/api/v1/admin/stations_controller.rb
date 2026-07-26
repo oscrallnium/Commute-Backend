@@ -9,7 +9,9 @@ module Api
         # Inserts a new stop immediately before/after an existing station on the
         # same line. See GraphService#insert_stop for the supported scope.
         def create
-          result = GraphService.insert_stop(request.parsed_body || params.to_unsafe_h)
+          # NOTE: `request.parsed_body` is NOT a real ActionDispatch::Request method in a
+          # live controller — see the identical note in GraphController#create_route.
+          result = GraphService.insert_stop(params.to_unsafe_h)
           if result.success?
             bust_graph_cache!(extra_pattern: "stations*")
             render json: { data: result.data }, status: :created
