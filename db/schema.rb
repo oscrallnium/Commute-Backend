@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 12) do
+ActiveRecord::Schema[7.2].define(version: 13) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -80,6 +80,7 @@ ActiveRecord::Schema[7.2].define(version: 12) do
     t.string "mk_directions_transport_type", default: "transit", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "is_road_snapped", default: false, null: false
     t.index ["edge_id"], name: "index_edges_on_edge_id", unique: true
     t.index ["from_station"], name: "index_edges_on_from_station"
     t.index ["line"], name: "index_edges_on_line"

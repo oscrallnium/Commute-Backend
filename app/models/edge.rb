@@ -22,7 +22,8 @@ class Edge < ApplicationRecord
       bidirectional: bidirectional,
       direction: direction,
       polyline_coordinates: polyline_coordinates,
-      mk_directions_transport_type: mk_directions_transport_type
+      mk_directions_transport_type: mk_directions_transport_type,
+      is_road_snapped: is_road_snapped
     }
   end
 end

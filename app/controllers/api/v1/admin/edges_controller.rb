@@ -15,6 +15,10 @@ module Api
           if attrs[:polyline_coordinates]
             recomputed = GraphService.polyline_distance_km(attrs[:polyline_coordinates])
             attrs[:distance_km] = recomputed if recomputed
+            # A hand-placed/GPS-corrected polyline via this precise map tool is
+            # deliberate, trusted geometry — Explore should show it as-is rather
+            # than silently discarding it for a fresh MKDirections guess.
+            attrs[:is_road_snapped] = true
           end
 
           if @edge.update(attrs)

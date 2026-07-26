@@ -169,6 +169,7 @@ class GraphService
           direction: direction,
           polyline_coordinates: poly_points,
           mk_directions_transport_type: mk_type_for(mode),
+          is_road_snapped: pass[:is_road_snapped],
           created_at: Time.current,
           updated_at: Time.current
         }
@@ -219,6 +220,7 @@ class GraphService
         direction: direction,
         polyline_coordinates: closing_points,
         mk_directions_transport_type: mk_type_for(mode),
+        is_road_snapped: pass[:is_road_snapped],
         created_at: Time.current,
         updated_at: Time.current
       }
@@ -380,19 +382,25 @@ class GraphService
         dist1 = poly_length_km(first_half)  || haversine(prev_lat, prev_lng, lat, lng)
         dist2 = poly_length_km(second_half) || haversine(lat, lng, next_lat, next_lng)
 
+        # Both halves are geometrically sliced from old_split_edge's own recorded
+        # polyline, so they inherit its trustworthiness rather than starting fresh.
         Edge.where(edge_id: old_split_edge.edge_id).delete_all
         Edge.create!(edge_attrs(old_split_edge, edge_id: "#{prefix}_SEG#{p - 1}",
-                                from: prev_id, to: new_station_id, distance_km: dist1, polyline: first_half))
+                                from: prev_id, to: new_station_id, distance_km: dist1, polyline: first_half,
+                                is_road_snapped: old_split_edge.is_road_snapped))
         Edge.create!(edge_attrs(old_split_edge, edge_id: "#{prefix}_SEG#{p}",
-                                from: new_station_id, to: next_id, distance_km: dist2, polyline: second_half))
+                                from: new_station_id, to: next_id, distance_km: dist2, polyline: second_half,
+                                is_road_snapped: old_split_edge.is_road_snapped))
       elsif p == 1
         template = Edge.find_by(edge_id: "#{prefix}_SEG2") # old SEG1, already shifted
         next_id = "#{prefix}_STOP2"
         next_lat, next_lng = coords_of(next_id)
         dist = haversine(lat, lng, next_lat, next_lng)
+        # A fresh straight chord, not sliced from any recorded geometry — flagged
+        # false so Explore knows to road-snap it via MKDirections.
         Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG1",
                                 from: new_station_id, to: next_id, distance_km: dist, polyline: [],
-                                mode: ref.type, line: line_id))
+                                is_road_snapped: false, mode: ref.type, line: line_id))
       else # p == n + 1 — append after the last stop
         template = Edge.find_by(edge_id: "#{prefix}_SEG#{n - 1}")
         prev_id = "#{prefix}_STOP#{n}"
@@ -400,7 +408,7 @@ class GraphService
         dist = haversine(prev_lat, prev_lng, lat, lng)
         Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG#{n}",
                                 from: prev_id, to: new_station_id, distance_km: dist, polyline: [],
-                                mode: ref.type, line: line_id))
+                                is_road_snapped: false, mode: ref.type, line: line_id))
       end
 
       recompute_terminals!(line_id, prefix)
@@ -498,6 +506,9 @@ class GraphService
           reliability: edge1&.reliability || edge2&.reliability || 0.9,
           bidirectional: true, direction: nil,
           polyline_coordinates: merged_poly,
+          # Only trustworthy if BOTH source edges were — one straight/unsnapped
+          # half would make the whole merged shape suspect.
+          is_road_snapped: (edge1&.is_road_snapped || false) && (edge2&.is_road_snapped || false),
           mk_directions_transport_type: edge1&.mk_directions_transport_type || edge2&.mk_directions_transport_type || mk_type_for(edge1&.mode)
         )
       end
@@ -712,7 +723,13 @@ class GraphService
         direction: pass[:direction] || pass["direction"],
         stops: pass[:stops] || pass["stops"] || [],
         closes_loop: pass[:closesLoop] || pass["closesLoop"],
-        closing_polyline: pass[:closingPolyline] || pass["closingPolyline"] || []
+        closing_polyline: pass[:closingPolyline] || pass["closingPolyline"] || [],
+        # True only when every segment recorded in this pass was actually
+        # snapped to a road via MKDirections (set by the iOS Loop Creator;
+        # absent/false for the legacy flat payload shape and any pass where a
+        # snap attempt fell back to a straight line) — lets Explore trust this
+        # polyline directly instead of silently re-computing and discarding it.
+        is_road_snapped: ActiveModel::Type::Boolean.new.cast(pass[:isRoadSnapped] || pass["isRoadSnapped"]) || false
       }
     end
   end
@@ -864,7 +881,7 @@ class GraphService
   # Builds a new edge's attribute hash, inheriting fare/quality/vehicle metadata
   # from `template` (an existing edge on the same line) since that metadata
   # describes the line as a whole, not any one segment.
-  def edge_attrs(template, edge_id:, from:, to:, distance_km:, polyline:, mode: nil, line: nil)
+  def edge_attrs(template, edge_id:, from:, to:, distance_km:, polyline:, is_road_snapped:, mode: nil, line: nil)
     {
       edge_id: edge_id, from_station: from, to_station: to,
       mode: mode || template&.mode, line: line || template&.line,
@@ -879,6 +896,7 @@ class GraphService
       bidirectional: true,
       direction: nil,
       polyline_coordinates: polyline,
+      is_road_snapped: is_road_snapped,
       mk_directions_transport_type: template&.mk_directions_transport_type || mk_type_for(mode || template&.mode)
     }
   end
@@ -931,7 +949,8 @@ class GraphService
           crowdFactor: e.crowd_factor.to_f, reliability: e.reliability.to_f,
           bidirectional: e.bidirectional,
           polylineCoordinates: e.polyline_coordinates,
-          mkDirectionsTransportType: e.mk_directions_transport_type }
+          mkDirectionsTransportType: e.mk_directions_transport_type,
+          isRoadSnapped: e.is_road_snapped }
     h[:direction] = e.direction if e.direction.present?
     h
   end
