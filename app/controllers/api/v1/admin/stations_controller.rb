@@ -3,14 +3,26 @@ module Api
     module Admin
       class StationsController < BaseController
         before_action :require_admin!
-        before_action :set_station
+        before_action :set_station, only: %i[update destroy]
+
+        # POST /api/v1/admin/stations
+        # Inserts a new stop immediately before/after an existing station on the
+        # same line. See GraphService#insert_stop for the supported scope.
+        def create
+          result = GraphService.insert_stop(request.parsed_body || params.to_unsafe_h)
+          if result.success?
+            bust_graph_cache!
+            render json: { data: result.data }, status: :created
+          else
+            render json: { error: "Validation failed", errors: result.errors.map { |e| e[:message] } },
+                   status: :unprocessable_content
+          end
+        end
 
         # PATCH /api/v1/admin/stations/:id
         def update
           if @station.update(station_params)
-            Rails.cache.delete_matched("stations*")
-            Rails.cache.delete("full_graph")
-            Rails.cache.delete("graph_version")
+            bust_graph_cache!
             render json: { data: @station.as_api_json }, status: :ok
           else
             render json: { error: "Update failed", errors: @station.errors.full_messages },
@@ -18,7 +30,27 @@ module Api
           end
         end
 
+        # DELETE /api/v1/admin/stations/:id
+        # Removes a stop, merging its two adjacent edges (or dropping the one
+        # adjacent edge if it was a terminal). See GraphService#remove_stop.
+        def destroy
+          result = GraphService.remove_stop(@station.station_id)
+          if result.success?
+            bust_graph_cache!
+            render json: { data: result.data }, status: :ok
+          else
+            render json: { error: "Delete failed", errors: result.errors.map { |e| e[:message] } },
+                   status: :unprocessable_content
+          end
+        end
+
         private
+
+        def bust_graph_cache!
+          Rails.cache.delete_matched("stations*")
+          Rails.cache.delete("full_graph")
+          Rails.cache.delete("graph_version")
+        end
 
         def set_station
           @station = Station.find(params[:id])
