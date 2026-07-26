@@ -575,7 +575,11 @@ class GraphService
     elsif line_id !~ LINE_ID_RE
       errors << { field: "lineID", message: "Line ID must only contain uppercase letters, digits, and underscores." }
     elsif Station.exists?(line: line_id)
-      errors << { field: "lineID", message: "Line ID '#{line_id}' already exists." }
+      # Not an outright rejection — this is also the path for adding the missing
+      # northbound/southbound direction to a route that already has the other one.
+      # #existing_line_append_error decides which case it actually is.
+      append_error = existing_line_append_error(line_id, passes)
+      errors << { field: "lineID", message: append_error } if append_error
     end
 
     mode = payload[:mode] || payload["mode"]
@@ -774,6 +778,37 @@ class GraphService
       errors << { field: "coordinates", message: "Coordinates (#{lat_f}, #{lng_f}) appear outside Metro Manila." }
     end
     errors
+  end
+
+  # Decides whether add_route may write into an *existing* line_id — the only
+  # legitimate case is adding the one missing direction (northbound/southbound) to
+  # a route that already has the other. Returns nil when that's exactly what this
+  # payload is doing (safe to proceed); otherwise a user-facing rejection message.
+  #
+  # Never allowed for train mode: MRT/LRT stations are shared by both directions'
+  # edges already (see the same reasoning in insert_stop/remove_stop above) — the
+  # concept of "add the missing direction" doesn't apply to them the same way, and
+  # this tool isn't how train lines get authored anyway (they're seeded, not
+  # admin-drawn).
+  def existing_line_append_error(line_id, passes)
+    existing_mode = Station.where(line: line_id).pick(:type)
+    return "Train lines can't be extended via Add Route." if existing_mode == "train"
+
+    existing_directions = Edge.where(line: line_id).distinct.pluck(:direction).compact
+    if existing_directions.empty?
+      return "Line ID '#{line_id}' already exists (recorded without a direction) — pick a different Line ID."
+    end
+
+    new_directions = passes.filter_map { |p| p[:direction] }
+    if new_directions.empty?
+      return "Line ID '#{line_id}' already exists — pick a different Line ID, or record a Northbound/Southbound " \
+             "direction to add it to that route."
+    end
+
+    colliding = new_directions & existing_directions
+    return "#{colliding.first.capitalize} already exists for '#{line_id}'." if colliding.any?
+
+    nil # Genuinely new direction(s) for an existing, direction-using, non-train line — allow it.
   end
 
   # The shared prefix of an auto-generated "<prefix>_STOP<n>" station id, or nil

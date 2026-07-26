@@ -12,8 +12,7 @@ module Api
 
           if result.success?
             # Bust graph cache so next iOS poll gets fresh data
-            Rails.cache.delete("full_graph")
-            Rails.cache.delete("graph_version")
+            bust_graph_cache!
             render json: { data: result.data }, status: :created
           else
             # Flatten {field:, message:} structs to plain strings — every other endpoint's
@@ -30,8 +29,7 @@ module Api
           result = GraphService.delete_route(params[:line_id])
 
           if result.success?
-            Rails.cache.delete("full_graph")
-            Rails.cache.delete("graph_version")
+            bust_graph_cache!
             render json: { data: result.data }, status: :ok
           else
             render json: { error: "Delete failed", errors: result.errors.map { |e| e[:message] } },

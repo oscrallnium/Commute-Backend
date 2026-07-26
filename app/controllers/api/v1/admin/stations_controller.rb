@@ -11,7 +11,7 @@ module Api
         def create
           result = GraphService.insert_stop(request.parsed_body || params.to_unsafe_h)
           if result.success?
-            bust_graph_cache!
+            bust_graph_cache!(extra_pattern: "stations*")
             render json: { data: result.data }, status: :created
           else
             render json: { error: "Validation failed", errors: result.errors.map { |e| e[:message] } },
@@ -22,7 +22,7 @@ module Api
         # PATCH /api/v1/admin/stations/:id
         def update
           if @station.update(station_params)
-            bust_graph_cache!
+            bust_graph_cache!(extra_pattern: "stations*")
             render json: { data: @station.as_api_json }, status: :ok
           else
             render json: { error: "Update failed", errors: @station.errors.full_messages },
@@ -36,7 +36,7 @@ module Api
         def destroy
           result = GraphService.remove_stop(@station.station_id)
           if result.success?
-            bust_graph_cache!
+            bust_graph_cache!(extra_pattern: "stations*")
             render json: { data: result.data }, status: :ok
           else
             render json: { error: "Delete failed", errors: result.errors.map { |e| e[:message] } },
@@ -45,12 +45,6 @@ module Api
         end
 
         private
-
-        def bust_graph_cache!
-          Rails.cache.delete_matched("stations*")
-          Rails.cache.delete("full_graph")
-          Rails.cache.delete("graph_version")
-        end
 
         def set_station
           @station = Station.find(params[:id])

@@ -19,8 +19,7 @@ module Api
 
           if @edge.update(attrs)
             GraphService.bump_version!
-            Rails.cache.delete("full_graph")
-            Rails.cache.delete("graph_version")
+            bust_graph_cache!
             render json: { data: @edge.as_api_json }, status: :ok
           else
             render json: { error: "Update failed", errors: @edge.errors.full_messages },

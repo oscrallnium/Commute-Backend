@@ -17,7 +17,7 @@ module Api
           if params.key?(:enforce_operating_hours)
             value = ActiveModel::Type::Boolean.new.cast(params[:enforce_operating_hours])
             meta.update!(enforce_operating_hours: value)
-            bust_graph_cache
+            bust_graph_cache!
           end
 
           render json: { data: settings_json(meta) }
@@ -38,13 +38,6 @@ module Api
 
         def settings_json(meta)
           { enforce_operating_hours: meta.enforce_operating_hours }
-        end
-
-        def bust_graph_cache
-          Rails.cache.delete("full_graph")
-          Rails.cache.delete("graph_version")
-        rescue => e
-          Rails.logger.warn("[settings] Cache bust failed: #{e.message}")
         end
       end
     end
