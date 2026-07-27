@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 13) do
+ActiveRecord::Schema[7.2].define(version: 14) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -60,8 +60,7 @@ ActiveRecord::Schema[7.2].define(version: 13) do
     t.index ["user_id"], name: "index_ar_world_maps_on_user_id"
   end
 
-  create_table "edges", id: false, force: :cascade do |t|
-    t.string "edge_id", null: false
+  create_table "edges", primary_key: "edge_id", id: :string, force: :cascade do |t|
     t.string "from_station", null: false
     t.string "to_station", null: false
     t.string "mode", null: false
@@ -81,18 +80,15 @@ ActiveRecord::Schema[7.2].define(version: 13) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.boolean "is_road_snapped", default: false, null: false
-    t.index ["edge_id"], name: "index_edges_on_edge_id", unique: true
     t.index ["from_station"], name: "index_edges_on_from_station"
     t.index ["line"], name: "index_edges_on_line"
     t.index ["mode"], name: "index_edges_on_mode"
     t.index ["to_station"], name: "index_edges_on_to_station"
   end
 
-  create_table "fare_matrix", id: false, force: :cascade do |t|
-    t.string "line_name", null: false
+  create_table "fare_matrix", primary_key: "line_name", id: :string, force: :cascade do |t|
     t.string "type", default: "flat", null: false
     t.jsonb "data", default: {}, null: false
-    t.index ["line_name"], name: "index_fare_matrix_on_line_name", unique: true
   end
 
   create_table "graph_meta", force: :cascade do |t|
@@ -118,15 +114,13 @@ ActiveRecord::Schema[7.2].define(version: 13) do
     t.index ["station_id"], name: "index_incidents_on_station_id"
   end
 
-  create_table "payment_methods", id: false, force: :cascade do |t|
-    t.string "id", null: false
+  create_table "payment_methods", id: :string, force: :cascade do |t|
     t.string "display_name", null: false
     t.string "sf_symbol", default: "", null: false
     t.string "color_hex", default: "#000000", null: false
     t.boolean "is_default", default: false, null: false
     t.string "accepted_by_modes", default: [], array: true
     t.text "notes", default: "", null: false
-    t.index ["id"], name: "index_payment_methods_on_id", unique: true
   end
 
   create_table "peak_hour_config", force: :cascade do |t|
@@ -161,8 +155,7 @@ ActiveRecord::Schema[7.2].define(version: 13) do
     t.index ["user_id"], name: "index_saved_routes_on_user_id"
   end
 
-  create_table "stations", id: false, force: :cascade do |t|
-    t.string "station_id", null: false
+  create_table "stations", primary_key: "station_id", id: :string, force: :cascade do |t|
     t.string "name", null: false
     t.string "short_name", default: "", null: false
     t.string "line", null: false
@@ -178,12 +171,10 @@ ActiveRecord::Schema[7.2].define(version: 13) do
     t.datetime "updated_at", null: false
     t.index ["line"], name: "index_stations_on_line"
     t.index ["name"], name: "idx_stations_name_trgm", opclass: :gin_trgm_ops, using: :gin
-    t.index ["station_id"], name: "index_stations_on_station_id", unique: true
     t.index ["type"], name: "index_stations_on_type"
   end
 
-  create_table "transport_modes", id: false, force: :cascade do |t|
-    t.string "id", null: false
+  create_table "transport_modes", id: :string, force: :cascade do |t|
     t.string "display_name", null: false
     t.string "plural_name", default: "", null: false
     t.string "sf_symbol", default: "", null: false
@@ -198,7 +189,6 @@ ActiveRecord::Schema[7.2].define(version: 13) do
     t.text "notes", default: "", null: false
     t.integer "position", default: 0, null: false
     t.jsonb "extra", default: {}, null: false
-    t.index ["id"], name: "index_transport_modes_on_id", unique: true
   end
 
   create_table "users", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
