@@ -8,17 +8,12 @@
 # writes correctly; no in-process mutex needed in Rails with a proper DB.
 
 class GraphService
-  # Metro Manila bounding box — same as Hono validation.ts
-  MM_LAT_MIN = 14.3
-  MM_LAT_MAX = 14.9
-  MM_LNG_MIN = 120.8
-  MM_LNG_MAX = 121.3
-
   EARTH_RADIUS_KM  = 6371.0
   AVG_SPEED_KMH    = 24.0
   MIN_TRAVEL_TIME  = 2.0 # minutes
 
-  LINE_ID_RE  = /\A[A-Z0-9_]+\z/
+  # Uppercase letters, digits, underscores, and dots — e.g. "STACRUZ.LRT_BUENDIA".
+  LINE_ID_RE  = /\A[A-Z0-9_.]+\z/
   TIME_RE     = /\A([01]\d|2[0-3]):[0-5]\d\z/
 
   Result = Struct.new(:success?, :data, :errors, keyword_init: true)
@@ -584,7 +579,7 @@ class GraphService
     elsif line_id.include?(" ")
       errors << { field: "lineID", message: "Line ID must not contain spaces." }
     elsif line_id !~ LINE_ID_RE
-      errors << { field: "lineID", message: "Line ID must only contain uppercase letters, digits, and underscores." }
+      errors << { field: "lineID", message: "Line ID must only contain uppercase letters, digits, underscores, and dots." }
     elsif Station.exists?(line: line_id)
       # Not an outright rejection — this is also the path for adding the missing
       # northbound/southbound direction to a route that already has the other one.
@@ -677,12 +672,6 @@ class GraphService
                         message: "#{label.capitalize}, stop #{i + 1}: lng must be between -180 and 180." }
           end
           next unless lat && lng
-
-          in_mm = lat.between?(MM_LAT_MIN, MM_LAT_MAX) && lng.between?(MM_LNG_MIN, MM_LNG_MAX)
-          unless in_mm
-            errors << { field: "passes[#{p_idx}].stops[#{i}].coordinates",
-                        message: "#{label.capitalize}, stop #{i + 1}: coordinates (#{lat}, #{lng}) appear outside Metro Manila." }
-          end
 
           polyline = stop[:polyline] || stop["polyline"]
           next unless polyline.present?
@@ -791,9 +780,6 @@ class GraphService
     lng_f = lng.present? ? lng.to_f : nil
     errors << { field: "lat", message: "lat must be between -90 and 90." } unless lat_f && (-90.0..90.0).cover?(lat_f)
     errors << { field: "lng", message: "lng must be between -180 and 180." } unless lng_f && (-180.0..180.0).cover?(lng_f)
-    if lat_f && lng_f && !(lat_f.between?(MM_LAT_MIN, MM_LAT_MAX) && lng_f.between?(MM_LNG_MIN, MM_LNG_MAX))
-      errors << { field: "coordinates", message: "Coordinates (#{lat_f}, #{lng_f}) appear outside Metro Manila." }
-    end
     errors
   end
 
