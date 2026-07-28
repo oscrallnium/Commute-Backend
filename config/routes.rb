@@ -10,6 +10,15 @@ Rails.application.routes.draw do
                registrations: "api/v1/auth/registrations"
              }
 
+  # Graph ids (station_id, edge_id, line) are author-supplied strings that can contain
+  # dots — e.g. the line "STACRUZ.LRT_BUENDIA" and its "STACRUZ.LRT_BUENDIA_STOP3"
+  # stations. Rails' default dynamic segment stops at a dot and hands the rest to
+  # `:format`, so `DELETE /admin/graph/routes/STACRUZ.LRT_BUENDIA` arrived as
+  # line_id: "STACRUZ", format: "LRT_BUENDIA" — deleting nothing while still reporting
+  # success. Every route below that carries a graph id in its path uses this constraint
+  # plus `format: false` so the whole segment, dots included, lands in the param.
+  GRAPH_ID = /[^\/]+/
+
   namespace :api do
     namespace :v1 do
       # ── Auth extras ──────────────────────────────────────────────────────────
@@ -24,9 +33,11 @@ Rails.application.routes.draw do
       get    "graph/version",        to: "graph#version"
       get    "graph",                to: "graph#show"
       get    "stations",             to: "stations#index"
-      get    "stations/:id",         to: "stations#show"
+      get    "stations/:id",         to: "stations#show",
+             constraints: { id: GRAPH_ID }, format: false
       get    "routes",               to: "routes#index"
-      get    "routes/:line_id",      to: "routes#show"
+      get    "routes/:line_id",      to: "routes#show",
+             constraints: { line_id: GRAPH_ID }, format: false
 
       # ── Saved routes (user commutes) ──────────────────────────────────────────
       resources :saved_routes, only: %i[index create destroy]
@@ -53,12 +64,15 @@ Rails.application.routes.draw do
         resources :users,         only: %i[index show destroy]
         resources :ar_world_maps, only: %i[index show update destroy]
         resources :incidents,     only: %i[index update destroy]
-        resources :stations,      only: %i[create update destroy]
-        resources :edges,         only: %i[update]
+        resources :stations,      only: %i[create update destroy],
+                                  constraints: { id: GRAPH_ID }, format: false
+        resources :edges,         only: %i[update],
+                                  constraints: { id: GRAPH_ID }, format: false
         get    "analytics/summary",      to: "analytics#summary"
         get    "analytics/hotspots",     to: "analytics#hotspots"
         post   "graph/routes",           to: "graph#create_route"
-        delete "graph/routes/:line_id",  to: "graph#delete_route"
+        delete "graph/routes/:line_id",  to: "graph#delete_route",
+               constraints: { line_id: GRAPH_ID }, format: false
         get    "settings",               to: "settings#show"
         patch  "settings",               to: "settings#update"
       end

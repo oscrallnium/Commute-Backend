@@ -257,8 +257,21 @@ class GraphService
   # ── delete_route ─────────────────────────────────────────────────────────────
 
   def delete_route(line_id)
+    line_id = line_id.to_s
     station_count = 0
     edge_count    = 0
+
+    # A delete that matches nothing is a failure, not a no-op success. Reporting 200 with
+    # zeroed counts is what let a mis-parsed line id ("STACRUZ" instead of
+    # "STACRUZ.LRT_BUENDIA") look like it worked: the client dropped the row optimistically,
+    # then the untouched route reappeared on the next sync. Bumping the graph version for a
+    # delete that changed nothing made that worse — every client resynced to fetch the same
+    # graph back.
+    if Station.where(line: line_id).none? && Edge.where(line: line_id).none?
+      return Result.new(success?: false, errors: [
+        { field: "line_id", message: "No route found with line ID '#{line_id}'." }
+      ])
+    end
 
     ActiveRecord::Base.transaction do
       # Edges reference stations — delete edges first to avoid FK issues
