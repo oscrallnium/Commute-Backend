@@ -80,6 +80,19 @@ class GraphService
     passes.each do |pass|
       direction = pass[:direction]
       stops     = pass[:stops]
+      # One-wayness used to be derived from the direction label (`bidirectional:
+      # direction.nil?`), which made the two inseparable: an untagged route was always
+      # two-way. That forced any genuinely one-way route with no meaningful compass
+      # direction — a jeepney circuit that runs out to a terminus and back along the
+      # same corridor on the *other* side of the road — to either invent a direction
+      # tag or accept reverse edges. Reverse edges there are actively wrong: they let
+      # the router walk the outbound stop sequence backwards and tell a homebound rider
+      # to alight at a stop that only serves outbound traffic.
+      #
+      # An explicit `bidirectional` on the pass now wins; when it's absent the old rule
+      # still applies, so existing payloads (iOS Loop Creator, web admin flat shape)
+      # and every route already in the database behave exactly as before.
+      bidirectional = pass[:bidirectional].nil? ? direction.nil? : pass[:bidirectional]
       # A direction-less pass keeps the original unscoped IDs (`LINE_STOP1`, `LINE_SEG1`)
       # so existing routes/web-admin payloads are unaffected. A northbound/southbound
       # pass gets its own ID namespace (`LINE_NB_STOP1`) since those stops are modeled as
@@ -157,10 +170,7 @@ class GraphService
           is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
           crowd_factor: payload[:crowdFactor].to_f,
           reliability: payload[:reliability].to_f,
-          # A directional pass is a one-way leg — no synthetic reverse edge should ever be
-          # inferred from it, so bidirectional is false whenever a direction is set. A
-          # direction-less pass keeps today's behavior (bidirectional true, no direction).
-          bidirectional: direction.nil?,
+          bidirectional: bidirectional,
           direction: direction,
           polyline_coordinates: poly_points,
           mk_directions_transport_type: mk_type_for(mode),
@@ -211,7 +221,7 @@ class GraphService
         is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
         crowd_factor: payload[:crowdFactor].to_f,
         reliability: payload[:reliability].to_f,
-        bidirectional: direction.nil?,
+        bidirectional: bidirectional,
         direction: direction,
         polyline_coordinates: closing_points,
         mk_directions_transport_type: mk_type_for(mode),
@@ -666,6 +676,15 @@ class GraphService
       end
       seen_directions << direction if direction
 
+      # A bidirectional edge gets a synthetic reverse on the client, and that reverse
+      # carries the *flipped* direction label. Combining the two therefore claims this
+      # pass serves both directions of travel, which is never what a directional
+      # recording means — reject it rather than silently generating edges that say so.
+      if pass[:bidirectional] && direction
+        errors << { field: "passes[#{p_idx}].bidirectional",
+                    message: "A direction-tagged pass can't be bidirectional." }
+      end
+
       if stops.length < 2
         errors << { field: "passes[#{p_idx}].stops", message: "#{label.capitalize}: at least 2 stops are required." }
       else
@@ -709,11 +728,21 @@ class GraphService
   # northbound + southbound pair in one call) or the legacy flat shape (top-level
   # `stops`/`closesLoop`/`closingPolyline`/`direction`, still sent by the web admin) —
   # wrapped here into a single implicit pass so both shapes flow through identical code.
+  # Reads a key that may arrive under either a Symbol or a String, distinguishing
+  # "absent" from "present but false" — the `hash[:k] || hash["k"]` idiom used
+  # elsewhere in this file collapses those two, which matters for a boolean flag
+  # whose default is not simply `false`.
+  def fetch_either(hash, key)
+    return hash[key] if hash.key?(key)
+    hash[key.to_s] if hash.respond_to?(:key?) && hash.key?(key.to_s)
+  end
+
   def normalize_passes(payload)
     raw_passes = payload[:passes] || payload["passes"]
     raw_passes = [
       {
         direction: payload[:direction] || payload["direction"],
+        bidirectional: fetch_either(payload, :bidirectional),
         stops: payload[:stops] || payload["stops"] || [],
         closesLoop: payload[:closesLoop] || payload["closesLoop"],
         closingPolyline: payload[:closingPolyline] || payload["closingPolyline"]
@@ -721,8 +750,13 @@ class GraphService
     ] if raw_passes.blank?
 
     raw_passes.map do |pass|
+      # nil means "caller didn't say" — add_route falls back to the legacy
+      # `direction.nil?` rule for those. Cast explicitly so a JSON `false` (and the
+      # string "false" a form-encoded client might send) doesn't read as "unset".
+      raw_bidirectional = fetch_either(pass, :bidirectional)
       {
         direction: pass[:direction] || pass["direction"],
+        bidirectional: raw_bidirectional.nil? ? nil : ActiveModel::Type::Boolean.new.cast(raw_bidirectional),
         stops: pass[:stops] || pass["stops"] || [],
         closes_loop: pass[:closesLoop] || pass["closesLoop"],
         closing_polyline: pass[:closingPolyline] || pass["closingPolyline"] || [],
