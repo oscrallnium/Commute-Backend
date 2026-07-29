@@ -495,6 +495,21 @@ class GraphService
         merged_time = edge1&.travel_time_minutes.to_f + edge2&.travel_time_minutes.to_f
         prev_id = "#{prefix}_STOP#{p - 1}"
 
+        # Both halves must allow reverse travel for the merged edge to; a nil half (one
+        # side missing) can't vouch for anything, so it doesn't grant two-way either.
+        halves = [edge1, edge2].compact
+        merged_bidirectional = halves.any? && halves.all?(&:bidirectional)
+        # Directions should already agree — both halves come from one chain — so a
+        # mismatch means the chain is malformed. Drop the label rather than assert one.
+        directions = halves.map(&:direction).uniq
+        merged_direction = directions.length == 1 ? directions.first : nil
+        if directions.length > 1
+          Rails.logger.warn(
+            "[GraphService#remove_stop] #{prefix}: merging edges with different directions " \
+            "(#{directions.inspect}) — dropping the direction label."
+          )
+        end
+
         Edge.where(edge_id: "#{prefix}_SEG#{p - 1}").delete_all
         Edge.where(edge_id: "#{prefix}_SEG#{p}").delete_all
         Station.where(station_id: "#{prefix}_STOP#{p}").delete_all
@@ -522,7 +537,11 @@ class GraphService
           is_air_conditioned: edge1&.is_air_conditioned || edge2&.is_air_conditioned || false,
           crowd_factor: edge1&.crowd_factor || edge2&.crowd_factor || 0.5,
           reliability: edge1&.reliability || edge2&.reliability || 0.9,
-          bidirectional: true, direction: nil,
+          # Same reasoning as edge_attrs: the merged edge inherits directionality instead
+          # of defaulting to two-way. Where the two halves disagree, the more restrictive
+          # answer wins — a one-way half means riders can't travel that stretch in reverse,
+          # and merging must not invent the ability.
+          bidirectional: merged_bidirectional, direction: merged_direction,
           polyline_coordinates: merged_poly,
           # Only trustworthy if BOTH source edges were — one straight/unsnapped
           # half would make the whole merged shape suspect.
@@ -926,8 +945,18 @@ class GraphService
       is_air_conditioned: template&.is_air_conditioned || false,
       crowd_factor: template&.crowd_factor || 0.5,
       reliability: template&.reliability || 0.9,
-      bidirectional: true,
-      direction: nil,
+      # Directionality is inherited like everything else here. Hardcoding
+      # `bidirectional: true, direction: nil` meant inserting a stop silently turned the
+      # two halves of the split segment two-way — and, on a directional chain, dropped
+      # the direction label — while every other attribute was faithfully copied. The
+      # client synthesises a reverse edge for anything bidirectional, so a two-way
+      # segment in the middle of a one-way route lets the router run that stretch
+      # backwards and send a rider to a stop that only serves the other direction.
+      #
+      # `template` is the edge being split (or, for a head/tail insert, its neighbour on
+      # the same chain) — in both cases the correct value was already in hand.
+      bidirectional: template&.bidirectional.nil? ? true : template.bidirectional,
+      direction: template&.direction,
       polyline_coordinates: polyline,
       is_road_snapped: is_road_snapped,
       mk_directions_transport_type: template&.mk_directions_transport_type || mk_type_for(mode || template&.mode)
