@@ -361,6 +361,13 @@ class GraphService
     idx = ordered.index { |s| s.station_id == ref.station_id }
     p = position == "after" ? idx + 2 : idx + 1 # 1-based target position of the new stop
 
+    # Road geometry for the *new* edge, supplied by the client (iOS fetches it from
+    # MKDirections at save time, oriented from → to of the edge being created).
+    # Only head/tail inserts can use it — a mid-chain insert slices the existing
+    # segment's own recorded polyline, which is better geometry than anything we could
+    # fetch fresh.
+    supplied_poly = normalize_supplied_polyline(payload[:polylineCoordinates] || payload["polylineCoordinates"])
+
     short_name = (payload[:shortName] || payload["shortName"]).presence || derive_short_name(name)
     open_time  = (payload[:openTime]  || payload["openTime"]).presence  || ref.open_time
     close_time = (payload[:closeTime] || payload["closeTime"]).presence || ref.close_time
@@ -395,6 +402,14 @@ class GraphService
         next_lat, next_lng = coords_of(next_id)
         poly = old_split_edge.polyline_coordinates || []
         split_idx = split_point_index(poly, lat, lng)
+        # Keep both halves drawable. Splitting on the first or last vertex hands one side
+        # a single point, which is no polyline at all — the same "0 waypoints" symptom a
+        # head/tail insert used to produce, just from the other direction. Clamping one
+        # vertex in costs nothing geometrically (the stop is at the segment's end either
+        # way) and leaves both halves with a real line. A 2-point polyline can't be split
+        # into two drawable halves at all; it is already a chord, so it is left as-is and
+        # the resulting stub can be repaired with "Snap to roads" in the edge editor.
+        split_idx = split_idx.clamp(1, poly.length - 2) if poly.length >= 3
         first_half  = poly.empty? ? [] : poly[0..split_idx]
         second_half = poly.empty? ? [] : poly[split_idx..-1]
         dist1 = poly_length_km(first_half)  || haversine(prev_lat, prev_lng, lat, lng)
@@ -413,20 +428,25 @@ class GraphService
         template = Edge.find_by(edge_id: "#{prefix}_SEG2") # old SEG1, already shifted
         next_id = "#{prefix}_STOP2"
         next_lat, next_lng = coords_of(next_id)
-        dist = haversine(lat, lng, next_lat, next_lng)
-        # A fresh straight chord, not sliced from any recorded geometry — flagged
-        # false so Explore knows to road-snap it via MKDirections.
+        # There is no existing geometry to slice here, so the client's fetched road route
+        # is the only real geometry available. Without it this edge used to be written
+        # empty "for Explore to road-snap later" — but Explore only ever snapped into its
+        # own in-memory cache and never wrote back, so the edge stayed empty forever and
+        # the route drew nothing between the new stop and its neighbour.
+        poly = pin_polyline_ends(supplied_poly, [lat, lng], [next_lat, next_lng])
+        dist = poly_length_km(poly) || haversine(lat, lng, next_lat, next_lng)
         Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG1",
-                                from: new_station_id, to: next_id, distance_km: dist, polyline: [],
-                                is_road_snapped: false, mode: ref.type, line: line_id))
+                                from: new_station_id, to: next_id, distance_km: dist, polyline: poly,
+                                is_road_snapped: poly.any?, mode: ref.type, line: line_id))
       else # p == n + 1 — append after the last stop
         template = Edge.find_by(edge_id: "#{prefix}_SEG#{n - 1}")
         prev_id = "#{prefix}_STOP#{n}"
         prev_lat, prev_lng = coords_of(prev_id)
-        dist = haversine(prev_lat, prev_lng, lat, lng)
+        poly = pin_polyline_ends(supplied_poly, [prev_lat, prev_lng], [lat, lng])
+        dist = poly_length_km(poly) || haversine(prev_lat, prev_lng, lat, lng)
         Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG#{n}",
-                                from: prev_id, to: new_station_id, distance_km: dist, polyline: [],
-                                is_road_snapped: false, mode: ref.type, line: line_id))
+                                from: prev_id, to: new_station_id, distance_km: dist, polyline: poly,
+                                is_road_snapped: poly.any?, mode: ref.type, line: line_id))
       end
 
       recompute_terminals!(line_id, prefix)
@@ -917,6 +937,39 @@ class GraphService
       p_lng = (p[:lng] || p["lng"]).to_f
       ((p_lat - lat)**2) + ((p_lng - lng)**2)
     end.last
+  end
+
+  # Client-supplied road geometry for a newly created edge → a clean [{lat:, lng:}] array,
+  # or nil when absent/unusable. Fewer than two usable points is not a polyline, and a
+  # two-point "polyline" is a straight chord — exactly what this whole change exists to
+  # stop storing — so both are rejected in favour of nil (caller falls back to empty).
+  def normalize_supplied_polyline(raw)
+    return nil unless raw.is_a?(Array)
+
+    points = raw.filter_map do |p|
+      lat = p[:lat] || p["lat"]
+      lng = p[:lng] || p["lng"]
+      next if lat.nil? || lng.nil?
+      lat_f = lat.to_f
+      lng_f = lng.to_f
+      next unless (-90.0..90.0).cover?(lat_f) && (-180.0..180.0).cover?(lng_f)
+      { lat: lat_f, lng: lng_f }
+    end
+    points.length >= 3 ? points : nil
+  end
+
+  # Forces a polyline to start and end exactly on its edge's two stations. MKDirections
+  # snaps its endpoints to the nearest road, which can sit tens of metres from the stop
+  # the admin actually placed — and the map draws stop pins from the station coordinates,
+  # so any drift shows up as a gap between the pin and the line. Same rule the iOS engine
+  # applies when stitching leg polylines.
+  def pin_polyline_ends(points, from_latlng, to_latlng)
+    return [] if points.blank?
+
+    pinned = points.dup
+    pinned[0]  = { lat: from_latlng[0], lng: from_latlng[1] }
+    pinned[-1] = { lat: to_latlng[0],   lng: to_latlng[1] }
+    pinned
   end
 
   def poly_length_km(points)
