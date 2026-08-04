@@ -22,12 +22,32 @@ module Api
         end
 
         # PATCH /api/v1/admin/stations/:id
+        #
+        # `access_points`, when present, replaces the station's whole set — the client
+        # sends every door it wants to survive, and anything absent is deleted. Wholesale
+        # rather than per-row because the admin editor works on the list as a unit: one
+        # round trip, one transaction, and no way to leave the set half-applied. It also
+        # means "remove a door" needs no separate endpoint.
+        #
+        # Omitting the key entirely leaves the doors untouched, so an ordinary rename or
+        # a nudge to the centroid does not have to resend them.
         def update
-          if @station.update(station_params)
+          ok = ActiveRecord::Base.transaction do
+            @station.update!(station_params)
+            replace_access_points! if params[:station]&.key?(:access_points)
+            true
+          rescue ActiveRecord::RecordInvalid, ActiveRecord::StatementInvalid => e
+            @error = e
+            raise ActiveRecord::Rollback
+          end
+
+          if ok
             bust_graph_cache!(extra_pattern: "stations*")
-            render json: { data: @station.as_api_json }, status: :ok
+            render json: { data: @station.reload.as_api_json }, status: :ok
           else
-            render json: { error: "Update failed", errors: @station.errors.full_messages },
+            messages = @station.errors.full_messages
+            messages = [@error&.message].compact if messages.empty?
+            render json: { error: "Update failed", errors: messages },
                    status: :unprocessable_entity
           end
         end
@@ -52,6 +72,37 @@ module Api
           @station = Station.find(params[:id])
         rescue ActiveRecord::RecordNotFound
           render json: { error: "Station not found" }, status: :not_found
+        end
+
+        # Replaces the station's doors with exactly what was sent.
+        #
+        # delete_all before insert, inside the caller's transaction: ids are client-chosen
+        # and a door can be renamed or re-pointed, so diffing by id would still have to
+        # handle every case this does in one step. The unique-id collision that a naive
+        # "insert then delete" would hit cannot arise.
+        def replace_access_points!
+          incoming = params[:station][:access_points] || []
+          @station.access_points.delete_all
+
+          incoming.each_with_index do |raw, index|
+            ap = raw.permit(:id, :access_point_id, :name, :kind, :direction,
+                            :lat, :lng, :position, coordinates: %i[lat lng])
+            coords = ap[:coordinates] || {}
+            lat = ap[:lat] || coords[:lat]
+            lng = ap[:lng] || coords[:lng]
+            direction = ap[:direction].presence # "" from a form means "serves both"
+
+            StationAccessPoint.create!(
+              access_point_id: (ap[:access_point_id] || ap[:id]).presence ||
+                               "#{@station.station_id}_AP_#{SecureRandom.hex(4).upcase}",
+              station_id: @station.station_id,
+              name: ap[:name].to_s.strip,
+              kind: ap[:kind].presence || "both",
+              direction: direction,
+              lat: lat, lng: lng,
+              position: ap[:position].presence || index
+            )
+          end
         end
 
         def station_params

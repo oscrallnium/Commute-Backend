@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 15) do
+ActiveRecord::Schema[7.2].define(version: 17) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -155,6 +155,23 @@ ActiveRecord::Schema[7.2].define(version: 15) do
     t.index ["user_id"], name: "index_saved_routes_on_user_id"
   end
 
+  create_table "station_access_points", primary_key: "access_point_id", id: :string, force: :cascade do |t|
+    t.string "station_id", null: false
+    t.string "name", default: "", null: false
+    t.string "kind", default: "both", null: false
+    t.string "direction"
+    t.decimal "lat", precision: 10, scale: 7, null: false
+    t.decimal "lng", precision: 10, scale: 7, null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["station_id", "direction"], name: "index_station_access_points_on_station_id_and_direction"
+    t.index ["station_id"], name: "index_station_access_points_on_station_id"
+    t.check_constraint "direction IS NULL OR (direction::text = ANY (ARRAY['northbound'::character varying, 'southbound'::character varying]::text[]))", name: "station_access_points_direction_check"
+    t.check_constraint "kind::text = ANY (ARRAY['entrance'::character varying, 'exit'::character varying, 'both'::character varying]::text[])", name: "station_access_points_kind_check"
+    t.check_constraint "lat >= '-90'::integer::numeric AND lat <= 90::numeric AND lng >= '-180'::integer::numeric AND lng <= 180::numeric", name: "station_access_points_coords_check"
+  end
+
   create_table "stations", primary_key: "station_id", id: :string, force: :cascade do |t|
     t.string "name", null: false
     t.string "short_name", default: "", null: false
@@ -214,4 +231,5 @@ ActiveRecord::Schema[7.2].define(version: 15) do
   add_foreign_key "ar_world_maps", "users"
   add_foreign_key "route_plan_events", "users"
   add_foreign_key "saved_routes", "users"
+  add_foreign_key "station_access_points", "stations", primary_key: "station_id", on_delete: :cascade
 end

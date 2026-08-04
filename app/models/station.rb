@@ -4,6 +4,11 @@ class Station < ApplicationRecord
 
   has_many :ar_world_maps, primary_key: :station_id, dependent: :destroy
   has_many :incidents, primary_key: :station_id, dependent: :destroy
+  # dependent: :destroy mirrors the FK's ON DELETE CASCADE so the rows go whether the
+  # station is removed through the model or straight from SQL.
+  has_many :access_points, -> { ordered },
+           class_name: "StationAccessPoint", primary_key: :station_id,
+           foreign_key: :station_id, dependent: :destroy
 
   validates :station_id, :name, :line, :type, presence: true
 
@@ -22,7 +27,13 @@ class Station < ApplicationRecord
       is_terminal: is_terminal,
       is_interchange: is_interchange,
       amenities: amenities,
-      operating_hours: { open: open_time, close: close_time }
+      operating_hours: { open: open_time, close: close_time },
+      # snake_case here, camelCase in GraphService#station_json. Both must carry this
+      # field: `interchangesWith` is already in the bundled transit_graph_v3.json and in
+      # the iOS Station model but is emitted by neither serialiser, so every OTA sync
+      # silently nils it out (AdminRoutesView.swift:76 patches around it). Do not let
+      # access points repeat that.
+      access_points: access_points.map(&:as_api_json)
     }
   end
 end

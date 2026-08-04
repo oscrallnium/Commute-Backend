@@ -361,12 +361,16 @@ class GraphService
     idx = ordered.index { |s| s.station_id == ref.station_id }
     p = position == "after" ? idx + 2 : idx + 1 # 1-based target position of the new stop
 
-    # Road geometry for the *new* edge, supplied by the client (iOS fetches it from
-    # MKDirections at save time, oriented from → to of the edge being created).
-    # Only head/tail inserts can use it — a mid-chain insert slices the existing
-    # segment's own recorded polyline, which is better geometry than anything we could
-    # fetch fresh.
-    supplied_poly = normalize_supplied_polyline(payload[:polylineCoordinates] || payload["polylineCoordinates"])
+    # Road geometry for the edges this insert creates, supplied by the client in creation
+    # order, each oriented from → to (iOS fetches them from MKDirections while previewing,
+    # so what the admin approved on screen is exactly what lands here).
+    #
+    # Used only where there is nothing to slice: a head/tail insert, or a mid-chain insert
+    # into a segment that has no polyline of its own. A mid-chain split of real recorded
+    # geometry ignores it — that polyline is better than anything fetched fresh.
+    supplied_polys = normalize_supplied_polylines(
+      payload[:newEdgePolylines] || payload["newEdgePolylines"]
+    )
 
     short_name = (payload[:shortName] || payload["shortName"]).presence || derive_short_name(name)
     open_time  = (payload[:openTime]  || payload["openTime"]).presence  || ref.open_time
@@ -401,29 +405,43 @@ class GraphService
         prev_lat, prev_lng = coords_of(prev_id)
         next_lat, next_lng = coords_of(next_id)
         poly = old_split_edge.polyline_coordinates || []
-        split_idx = split_point_index(poly, lat, lng)
-        # Keep both halves drawable. Splitting on the first or last vertex hands one side
-        # a single point, which is no polyline at all — the same "0 waypoints" symptom a
-        # head/tail insert used to produce, just from the other direction. Clamping one
-        # vertex in costs nothing geometrically (the stop is at the segment's end either
-        # way) and leaves both halves with a real line. A 2-point polyline can't be split
-        # into two drawable halves at all; it is already a chord, so it is left as-is and
-        # the resulting stub can be repaired with "Snap to roads" in the edge editor.
-        split_idx = split_idx.clamp(1, poly.length - 2) if poly.length >= 3
-        first_half  = poly.empty? ? [] : poly[0..split_idx]
-        second_half = poly.empty? ? [] : poly[split_idx..-1]
+
+        # Nothing to slice: the segment itself has no geometry (this is the state a
+        # pre-fix head/tail insert left behind). Both halves take the client's fetched
+        # road routes instead, or stay empty if it couldn't supply them.
+        if poly.empty? && supplied_polys.length == 2
+          first_half  = pin_polyline_ends(supplied_polys[0], [prev_lat, prev_lng], [lat, lng])
+          second_half = pin_polyline_ends(supplied_polys[1], [lat, lng], [next_lat, next_lng])
+        else
+          split_idx = split_point_index(poly, lat, lng)
+          # Keep both halves drawable. Splitting on the first or last vertex hands one
+          # side a single point, which is no polyline at all — the same "0 waypoints"
+          # symptom a head/tail insert used to produce, just from the other direction.
+          # Clamping one vertex in costs nothing geometrically (the stop is at the
+          # segment's end either way) and leaves both halves with a real line. A 2-point
+          # polyline can't be split into two drawable halves at all; it is already a
+          # chord, so it is left as-is and the resulting stub can be repaired with
+          # "Snap to Roads" in the edge editor.
+          split_idx = split_idx.clamp(1, poly.length - 2) if poly.length >= 3
+          first_half  = poly.empty? ? [] : poly[0..split_idx]
+          second_half = poly.empty? ? [] : poly[split_idx..-1]
+        end
+
         dist1 = poly_length_km(first_half)  || haversine(prev_lat, prev_lng, lat, lng)
         dist2 = poly_length_km(second_half) || haversine(lat, lng, next_lat, next_lng)
 
-        # Both halves are geometrically sliced from old_split_edge's own recorded
-        # polyline, so they inherit its trustworthiness rather than starting fresh.
+        # A sliced half inherits old_split_edge's trustworthiness; a fetched half is a road
+        # route by construction.
         Edge.where(edge_id: old_split_edge.edge_id).delete_all
+        # Sliced halves inherit the original's trustworthiness; fetched halves are road
+        # routes by construction, so either way "snapped" tracks whether there is geometry.
+        halves_snapped = poly.empty? ? first_half.any? : old_split_edge.is_road_snapped
         Edge.create!(edge_attrs(old_split_edge, edge_id: "#{prefix}_SEG#{p - 1}",
                                 from: prev_id, to: new_station_id, distance_km: dist1, polyline: first_half,
-                                is_road_snapped: old_split_edge.is_road_snapped))
+                                is_road_snapped: halves_snapped))
         Edge.create!(edge_attrs(old_split_edge, edge_id: "#{prefix}_SEG#{p}",
                                 from: new_station_id, to: next_id, distance_km: dist2, polyline: second_half,
-                                is_road_snapped: old_split_edge.is_road_snapped))
+                                is_road_snapped: halves_snapped))
       elsif p == 1
         template = Edge.find_by(edge_id: "#{prefix}_SEG2") # old SEG1, already shifted
         next_id = "#{prefix}_STOP2"
@@ -433,7 +451,7 @@ class GraphService
         # empty "for Explore to road-snap later" — but Explore only ever snapped into its
         # own in-memory cache and never wrote back, so the edge stayed empty forever and
         # the route drew nothing between the new stop and its neighbour.
-        poly = pin_polyline_ends(supplied_poly, [lat, lng], [next_lat, next_lng])
+        poly = pin_polyline_ends(supplied_polys.first, [lat, lng], [next_lat, next_lng])
         dist = poly_length_km(poly) || haversine(lat, lng, next_lat, next_lng)
         Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG1",
                                 from: new_station_id, to: next_id, distance_km: dist, polyline: poly,
@@ -442,7 +460,7 @@ class GraphService
         template = Edge.find_by(edge_id: "#{prefix}_SEG#{n - 1}")
         prev_id = "#{prefix}_STOP#{n}"
         prev_lat, prev_lng = coords_of(prev_id)
-        poly = pin_polyline_ends(supplied_poly, [prev_lat, prev_lng], [lat, lng])
+        poly = pin_polyline_ends(supplied_polys.first, [prev_lat, prev_lng], [lat, lng])
         dist = poly_length_km(poly) || haversine(prev_lat, prev_lng, lat, lng)
         Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG#{n}",
                                 from: prev_id, to: new_station_id, distance_km: dist, polyline: poly,
@@ -590,7 +608,10 @@ class GraphService
     payments = PaymentMethod.order(:id)
     peak     = PeakHourConfig.first
     fares    = FareMatrix.all
-    stations = Station.order(:line, :station_id)
+    # includes(:access_points): station_json reads them per station, and without the
+    # preload that is one query per station on a payload that already assembles the whole
+    # graph in a single request.
+    stations = Station.includes(:access_points).order(:line, :station_id)
     edges    = Edge.order(:line, :edge_id)
 
     {
@@ -939,10 +960,18 @@ class GraphService
     end.last
   end
 
-  # Client-supplied road geometry for a newly created edge → a clean [{lat:, lng:}] array,
-  # or nil when absent/unusable. Fewer than two usable points is not a polyline, and a
-  # two-point "polyline" is a straight chord — exactly what this whole change exists to
-  # stop storing — so both are rejected in favour of nil (caller falls back to empty).
+  # Client-supplied road geometry for the newly created edges → an array of clean
+  # [{lat:, lng:}] polylines, or [] when absent/unusable. A polyline of fewer than three
+  # points is rejected: two points is a straight chord, which is exactly what this whole
+  # change exists to stop storing. Rejection is all-or-nothing so a partially usable
+  # payload can't leave one new edge with a road route and the other with a chord.
+  def normalize_supplied_polylines(raw)
+    return [] unless raw.is_a?(Array) && raw.first.is_a?(Array)
+
+    polys = raw.map { |poly| normalize_supplied_polyline(poly) }
+    polys.all? ? polys : []
+  end
+
   def normalize_supplied_polyline(raw)
     return nil unless raw.is_a?(Array)
 
@@ -1044,13 +1073,26 @@ class GraphService
       acceptedByModes: p.accepted_by_modes, notes: p.notes }
   end
 
+  # camelCase twin of Station#as_api_json — change the two together. A field present in
+  # only one of them goes missing on whichever path does not carry it, which is what
+  # already happened to `interchangesWith`: it is in the bundled transit_graph_v3.json
+  # and in the iOS Station model, but neither serialiser emits it, so an OTA sync nils it
+  # for every station.
+  #
+  # `accessPoints` is omitted rather than sent empty when a station has no doors
+  # surveyed, so the payload does not grow by 60 empty arrays for a feature that starts
+  # out unpopulated. The iOS side decodes it as optional and falls back to `coordinates`.
   def station_json(s)
-    { id: s.station_id, name: s.name, shortName: s.short_name,
-      line: s.line, type: s.type,
-      coordinates: { lat: s.lat.to_f, lng: s.lng.to_f },
-      isTerminal: s.is_terminal, isInterchange: s.is_interchange,
-      amenities: s.amenities,
-      operatingHours: { open: s.open_time, close: s.close_time } }
+    json = { id: s.station_id, name: s.name, shortName: s.short_name,
+             line: s.line, type: s.type,
+             coordinates: { lat: s.lat.to_f, lng: s.lng.to_f },
+             isTerminal: s.is_terminal, isInterchange: s.is_interchange,
+             amenities: s.amenities,
+             operatingHours: { open: s.open_time, close: s.close_time } }
+
+    points = s.access_points
+    json[:accessPoints] = points.map(&:as_graph_json) if points.any?
+    json
   end
 
   def edge_json(e)

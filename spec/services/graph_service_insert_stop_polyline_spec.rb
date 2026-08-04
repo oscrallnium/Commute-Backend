@@ -6,7 +6,8 @@ require "rails_helper"
 # CEAT to UPLB_KANAN produced UPLB_KANAN_SEG8 with 0 waypoints, and the route drew nothing
 # between Animal Science and the new stop.
 #
-# The client now fetches the road route at save time and posts it as `polylineCoordinates`.
+# The client now fetches the road route while previewing and posts it as `newEdgePolylines`
+# (one entry per new edge, in creation order).
 RSpec.describe "GraphService#insert_stop polyline handling" do
   before do
     TransportMode.find_or_create_by!(id: "jeepney") do |m|
@@ -50,7 +51,7 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
       result = GraphService.insert_stop(
         "referenceStationId" => "POLY_STOP4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
-        "polylineCoordinates" => road
+        "newEdgePolylines" => [road]
       )
       expect(result.success?).to be true
 
@@ -65,7 +66,7 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
       GraphService.insert_stop(
         "referenceStationId" => "POLY_STOP4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
-        "polylineCoordinates" => road
+        "newEdgePolylines" => [road]
       )
       pts = points(edge("POLY_SEG4"))
       expect(pts.first).to eq [14.24, 121.0]     # POLY_STOP4, not the road's 14.2401
@@ -76,7 +77,7 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
       GraphService.insert_stop(
         "referenceStationId" => "POLY_STOP4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
-        "polylineCoordinates" => road
+        "newEdgePolylines" => [road]
       )
       crow_flies = 1.11 # ~0.01 degrees of latitude
       expect(edge("POLY_SEG4").distance_km).to be > crow_flies
@@ -96,7 +97,7 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
       GraphService.insert_stop(
         "referenceStationId" => "POLY_STOP4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
-        "polylineCoordinates" => [{ "lat" => 14.24, "lng" => 121.0 }, { "lat" => new_lat, "lng" => 121.0 }]
+        "newEdgePolylines" => [[{ "lat" => 14.24, "lng" => 121.0 }, { "lat" => new_lat, "lng" => 121.0 }]]
       )
       expect(points(edge("POLY_SEG4"))).to be_empty
       expect(edge("POLY_SEG4").is_road_snapped).to be false
@@ -106,7 +107,7 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
       GraphService.insert_stop(
         "referenceStationId" => "POLY_STOP4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
-        "polylineCoordinates" => [{ "lat" => 999, "lng" => 121.0 }, { "lat" => nil, "lng" => 121.0 }]
+        "newEdgePolylines" => [[{ "lat" => 999, "lng" => 121.0 }, { "lat" => nil, "lng" => 121.0 }]]
       )
       expect(points(edge("POLY_SEG4"))).to be_empty
     end
@@ -120,13 +121,69 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
       GraphService.insert_stop(
         "referenceStationId" => "POLY_STOP1", "position" => "before",
         "name" => "New Head", "lat" => 14.205, "lng" => 121.0,
-        "polylineCoordinates" => road
+        "newEdgePolylines" => [road]
       )
       seg = edge("POLY_SEG1")
       expect([seg.from_station, seg.to_station]).to eq %w[POLY_STOP1 POLY_STOP2]
       expect(points(seg).first).to eq [14.205, 121.0]  # the new head stop
       expect(points(seg).last).to  eq [14.21, 121.0]   # the old first stop
       expect(seg.is_road_snapped).to be true
+    end
+  end
+
+  describe "splitting a segment that has no polyline of its own" do
+    # The state a pre-fix head/tail insert left behind (UPLB_KANAN_SEG8). There is nothing
+    # to slice, so both halves need their own fetched road route or the empty edge simply
+    # becomes two empty edges.
+    it "takes both halves from the client's fetched routes" do
+      edge("POLY_SEG1").update!(polyline_coordinates: [])
+      first  = [{ "lat" => 14.2100, "lng" => 121.0 }, { "lat" => 14.2120, "lng" => 121.0015 }, { "lat" => 14.2149, "lng" => 121.0 }]
+      second = [{ "lat" => 14.2151, "lng" => 121.0 }, { "lat" => 14.2170, "lng" => 121.0015 }, { "lat" => 14.2199, "lng" => 121.0 }]
+
+      result = GraphService.insert_stop(
+        "referenceStationId" => "POLY_STOP1", "position" => "after",
+        "name" => "Mid", "lat" => 14.215, "lng" => 121.0,
+        "newEdgePolylines" => [first, second]
+      )
+      expect(result.success?).to be true
+
+      expect(points(edge("POLY_SEG1")).length).to eq 3
+      expect(points(edge("POLY_SEG2")).length).to eq 3
+      expect(edge("POLY_SEG1").is_road_snapped).to be true
+      # Ends pinned to the three stops involved.
+      expect(points(edge("POLY_SEG1")).first).to eq [14.21, 121.0]
+      expect(points(edge("POLY_SEG1")).last).to  eq [14.215, 121.0]
+      expect(points(edge("POLY_SEG2")).first).to eq [14.215, 121.0]
+      expect(points(edge("POLY_SEG2")).last).to  eq [14.22, 121.0]
+    end
+
+    it "still writes two empty halves when no routes could be fetched" do
+      edge("POLY_SEG1").update!(polyline_coordinates: [])
+      GraphService.insert_stop(
+        "referenceStationId" => "POLY_STOP1", "position" => "after",
+        "name" => "Mid", "lat" => 14.215, "lng" => 121.0
+      )
+      expect(points(edge("POLY_SEG1"))).to be_empty
+      expect(points(edge("POLY_SEG2"))).to be_empty
+    end
+
+    it "ignores a real recorded polyline's slice in favour of nothing fetched" do
+      # Sanity check the guard is on emptiness, not on the payload: a segment WITH geometry
+      # must keep being sliced even when the client also sent routes.
+      edge("POLY_SEG1").update!(polyline_coordinates: [
+        { lat: 14.21, lng: 121.0 }, { lat: 14.213, lng: 121.004 },
+        { lat: 14.217, lng: 121.004 }, { lat: 14.22, lng: 121.0 }
+      ])
+      GraphService.insert_stop(
+        "referenceStationId" => "POLY_STOP1", "position" => "after",
+        "name" => "Mid", "lat" => 14.215, "lng" => 121.0,
+        "newEdgePolylines" => [
+          [{ "lat" => 14.21, "lng" => 121.9 }, { "lat" => 14.212, "lng" => 121.9 }, { "lat" => 14.215, "lng" => 121.9 }],
+          [{ "lat" => 14.215, "lng" => 121.9 }, { "lat" => 14.218, "lng" => 121.9 }, { "lat" => 14.22, "lng" => 121.9 }]
+        ]
+      )
+      # 121.9 would only appear if the fetched routes had been used.
+      expect(points(edge("POLY_SEG1")).map(&:last)).to all(be < 121.1)
     end
   end
 
