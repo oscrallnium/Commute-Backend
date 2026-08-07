@@ -89,6 +89,12 @@ class CorrectRailStationCoordinates < ActiveRecord::Migration[7.1]
   class MigrationStation < ActiveRecord::Base
     self.table_name  = "stations"
     self.primary_key = "station_id"
+    # Without this, ActiveRecord's default STI behaviour treats `type` (here holding
+    # "train"/"bus"/"jeepney"/etc., not a Ruby class name) as the inheritance
+    # discriminator, and instantiating a row raises SubclassNotFound the moment it
+    # tries to look up a class literally called Train. Mirrors app/models/station.rb,
+    # which sets the same thing on the real model for the same column.
+    self.inheritance_column = nil
   end
 
   def up
