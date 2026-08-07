@@ -71,10 +71,9 @@ class GraphService
     errors = validate(payload)
     return Result.new(success?: false, errors: errors) if errors.any?
 
-    passes       = normalize_passes(payload)
-    line_id      = payload[:lineID]     || payload["lineID"]
-    mode         = payload[:mode]       || payload["mode"]
-    display_name = payload[:displayName] || payload["displayName"]
+    passes   = normalize_passes(payload)
+    line_id  = payload[:lineID] || payload["lineID"]
+    mode     = payload[:mode]   || payload["mode"]
     stations = []
     edges    = []
 
@@ -248,26 +247,6 @@ class GraphService
       TransportMode.where(id: mode)
                    .where.not("? = ANY(lines)", line_id)
                    .update_all("lines = array_append(lines, '#{line_id.gsub("'", "''")}')")
-
-      # `validate` above has already required displayName on this payload since before
-      # this line existed — the name was checked and then thrown away every time a route
-      # was created. Persisting it here is what makes GET /api/v1/graph's `lines` section
-      # (see #assemble_graph) actually have a name for a route the moment it is added,
-      # not just for the ones backfilled in migration 018. `update_only: [:display_name,
-      # :mode, :updated_at]`, not create-only: re-adding stops to an existing lineID (the
-      # normal "extend a route" flow) resubmits the same displayName, and a caller
-      # correcting a typo in the name should not need a separate endpoint for it.
-      #
-      # `record_timestamps: false` for the same reason it is on the Station/Edge
-      # upserts above: the hash already sets updated_at, and without this Rails 7.2's
-      # upsert additionally injects its own into the ON CONFLICT SET clause, colliding
-      # with the one in update_only: and raising "multiple assignments to same column."
-      Line.upsert(
-        { id: line_id, display_name: display_name, mode: mode,
-          created_at: Time.current, updated_at: Time.current },
-        unique_by: :id, update_only: [:display_name, :mode, :updated_at],
-        record_timestamps: false
-      )
 
       bump_graph_version!
     end
@@ -627,7 +606,6 @@ class GraphService
     meta     = GraphMeta.first!
     modes    = TransportMode.order(:position)
     payments = PaymentMethod.order(:id)
-    lines    = Line.order(:id)
     peak     = PeakHourConfig.first
     fares    = FareMatrix.all
     # includes(:access_points): station_json reads them per station, and without the
@@ -648,7 +626,6 @@ class GraphService
       },
       transportModes: modes.to_h { |m| [m.id, mode_json(m)] },
       paymentMethods: payments.to_h { |p| [p.id, payment_json(p)] },
-      lines: lines.to_h { |l| [l.id, line_json(l)] },
       peakHourMultipliers: peak&.data || {},
       fareMatrix: fares.to_h { |f| [f.line_name, f.data] },
       stations: stations.map { |s| station_json(s) },
@@ -1094,10 +1071,6 @@ class GraphService
     { id: p.id, displayName: p.display_name, sfSymbol: p.sf_symbol,
       colorHex: p.color_hex, isDefault: p.is_default,
       acceptedByModes: p.accepted_by_modes, notes: p.notes }
-  end
-
-  def line_json(l)
-    { id: l.id, displayName: l.display_name, mode: l.mode }
   end
 
   # camelCase twin of Station#as_api_json — change the two together. A field present in

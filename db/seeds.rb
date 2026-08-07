@@ -67,17 +67,6 @@ graph["paymentMethods"].each do |id, p|
 end
 puts "PaymentMethods seeded: #{PaymentMethod.count}"
 
-# ── Lines ─────────────────────────────────────────────────────────────────────
-Line.delete_all
-(graph["lines"] || {}).each do |id, l|
-  Line.create!(
-    id: id,
-    display_name: l["displayName"],
-    mode: l["mode"]
-  )
-end
-puts "Lines seeded: #{Line.count}"
-
 # ── Peak hour config ──────────────────────────────────────────────────────────
 PeakHourConfig.delete_all
 PeakHourConfig.create!(data: graph["peakHourMultipliers"] || {})
