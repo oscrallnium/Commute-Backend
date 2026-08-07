@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 17) do
+ActiveRecord::Schema[7.2].define(version: 18) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -112,6 +112,13 @@ ActiveRecord::Schema[7.2].define(version: 17) do
     t.index ["expires_at"], name: "index_incidents_on_expires_at"
     t.index ["line_id"], name: "index_incidents_on_line_id"
     t.index ["station_id"], name: "index_incidents_on_station_id"
+  end
+
+  create_table "lines", id: :string, force: :cascade do |t|
+    t.string "display_name", null: false
+    t.string "mode"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "payment_methods", id: :string, force: :cascade do |t|
