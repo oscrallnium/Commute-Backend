@@ -5,16 +5,8 @@ services:
     region: singapore
     plan: starter
     buildCommand: bundle install
-    # preDeployCommand is a paid-plan feature — on the free plan Render accepts it in
-    # this file but silently never runs it, with no warning anywhere. That is what
-    # actually broke production on 2026-08-07: a deploy shipped code querying a table
-    # a migration was supposed to create, the migration never ran, and every request
-    # to that code path 503'd until the deploy was reverted. Migrating from inside
-    # startCommand instead runs on every boot — including the free plan's frequent
-    # idle-timeout cold starts, which is wasted work but a harmless no-op once a
-    # migration has already applied — and `&&` means Puma never starts, so the app
-    # never serves traffic, if the migration fails.
-    startCommand: bundle exec rails db:migrate && bundle exec puma -C config/puma.rb
+    preDeployCommand: bundle exec rails db:migrate
+    startCommand: bundle exec puma -C config/puma.rb
     healthCheckPath: /health
     envVars:
       - key: RAILS_ENV
