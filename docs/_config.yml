@@ -1,0 +1,36 @@
+title: Gora Backend
+description: >-
+  Developer documentation for commutebeh-rails — the Rails 7.1 API that authors,
+  versions and distributes the Gora transit graph.
+
+remote_theme: just-the-docs/just-the-docs@v0.10.1
+
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+
+# Mermaid diagrams — just-the-docs renders ```mermaid fences when this is set.
+mermaid:
+  version: "10.9.0"
+
+color_scheme: dark
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  "GitHub repo":
+    - "https://github.com/oscrallnium/Commute-Backend"
+
+nav_external_links:
+  - title: "iOS client repo"
+    url: "https://github.com/oscrallnium/Commute-Backend"
+    hide_icon: false
+
+footer_content: >-
+  Gora backend documentation · generated from the codebase at
+  <code>commutebeh-rails</code>.
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
