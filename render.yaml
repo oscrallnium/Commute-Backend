@@ -27,6 +27,12 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      # Consumed by migration 011 only, and only when the account does not already
+      # exist. Unset means the migration generates a random password and logs it once.
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: BOOTSTRAP_DEV_PASSWORD
+        sync: false
       - key: SUPABASE_S3_ENDPOINT
         sync: false
       - key: SUPABASE_S3_ACCESS_KEY
