@@ -27,11 +27,11 @@ authored, versioned and served from.
 
 ```mermaid
 graph LR
-    subgraph client["📱 iOS client"]
+    subgraph client["iOS client"]
         ENG["TransitGraphEngine<br/><i>A* — routing happens HERE</i>"]
         CACHE[("Documents/<br/>transit_graph_v3.json")]
     end
-    subgraph server["☁️ commutebeh-rails"]
+    subgraph server["commutebeh-rails"]
         AUTH["Devise + JWT"]
         GS["GraphService<br/><i>authoring + assembly</i>"]
         API["REST API"]
@@ -59,8 +59,8 @@ routing request.
 
 ```mermaid
 graph LR
-    C["👤 Commuter<br/><i>role: commuter</i>"]
-    A["🛠 Admin / Surveyor<br/><i>role: admin</i>"]
+    C["Commuter<br/><i>role: commuter</i>"]
+    A["Admin / Surveyor<br/><i>role: admin</i>"]
 
     C --> C1[Search a route]
     C --> C2[Save a commute]
@@ -103,6 +103,9 @@ they change how the client treats an edge:
 
 ## Naming note
 
-The product is **Gora**. The iOS Xcode project and bundle ID still say `CommuteBeh`, and this
-repository is `Commute-Backend` with an app directory named `commutebeh-rails`. Expect all three
-names.
+The product is **Gora**, and the iOS project, target and bundle ID (`com.banaueinc.gora`) now
+all match it.
+
+The old name **CommuteBeh** survives on the server side: this repository is `Commute-Backend`,
+its app directory is `commutebeh-rails`, and the bootstrap admin account is
+`admin@commutebeh.ph`. Expect the old name in infrastructure, not in the client.

@@ -16,7 +16,7 @@ nav_order: 3
 
 ```mermaid
 graph TB
-    subgraph Device["📱 iOS device"]
+    subgraph Device["iOS device"]
         UI["SwiftUI views"]
         VM["RouteStore"]
         ENG["TransitGraphEngine<br/><i>actor · A* search</i>"]
@@ -24,7 +24,7 @@ graph TB
         KC[("Keychain · JWT")]
     end
 
-    subgraph Render["☁️ Render — Singapore"]
+    subgraph Render["Render — Singapore"]
         API["commutebeh-rails<br/>Rails 7.1 · Puma"]
         RC[("Redis cache")]
     end
@@ -146,7 +146,7 @@ graph TD
     CTRL --> MOD["Models<br/><i>as_api_json</i>"]
     GS --> MOD
     MOD --> PG[(Postgres)]
-    CTRL -.->|❌ never| PG
+    CTRL -.->|never| PG
 
     style GS fill:#8b2635,color:#fff
 ```

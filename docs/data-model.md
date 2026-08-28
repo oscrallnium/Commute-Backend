@@ -192,7 +192,7 @@ Consequences:
   },
   "transportModes": { "train": { … }, "walk": { … } },
   "paymentMethods": { "cash": { … } },
-  "lines":          { "MRT-3": { "id": "MRT-3", "displayName": "MRT-3" } },
+  "lines":          { "MRT-3": { "id": "MRT-3", "displayName": "MRT-3"} },
   "peakHourMultipliers": {
     "morningPeak": { "startHour": 6, "endHour": 9, "multiplier": 1.4,
                      "appliesTo": ["bus", "jeepney"] },
@@ -200,8 +200,8 @@ Consequences:
     "trainPeak":   { … }
   },
   "fareMatrix": { "MRT-3": { … } },
-  "stations": [ … ],
-  "edges":    [ … ]
+  "stations": [… ],
+  "edges":    [… ]
 }
 ```
 

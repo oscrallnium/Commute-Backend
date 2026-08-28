@@ -58,7 +58,7 @@ the user out immediately.
 
 ```mermaid
 graph LR
-    subgraph pub["🔓 Public"]
+    subgraph pub["Public"]
         H["GET /health"]
         GV["GET /api/v1/graph/version"]
         G["GET /api/v1/graph"]
@@ -67,7 +67,7 @@ graph LR
         RT["GET /api/v1/routes"]
         RT1["GET /api/v1/routes/:line_id"]
     end
-    subgraph auth["🔑 Authenticated"]
+    subgraph auth["Authenticated"]
         REG["POST /auth/register"]
         SI["POST /auth/sign_in"]
         SO["DELETE /auth/sign_out"]
@@ -79,7 +79,7 @@ graph LR
         AN["POST /api/v1/analytics/route_plan"]
         AR["/api/v1/ar_world_maps"]
     end
-    subgraph adm["🛠 Admin only"]
+    subgraph adm["Admin only"]
         AGC["POST /api/v1/admin/graph/routes"]
         AGD["DELETE /api/v1/admin/graph/routes/:line_id"]
         ASC["/api/v1/admin/stations"]
@@ -102,7 +102,7 @@ graph LR
 
 ```json
 { "user": { "email": "…", "password": "…",
-            "password_confirmation": "…", "display_name": "…" } }
+            "password_confirmation": "…", "display_name": "…"} }
 ```
 
 → `{ "data": { "token": "eyJ…", "user": { id, email, display_name, role } } }`
@@ -110,10 +110,10 @@ graph LR
 ### `POST /auth/sign_in`
 
 ```json
-{ "user": { "email": "…", "password": "…" } }
+{ "user": { "email": "…", "password": "…"} }
 ```
 
-→ same shape. `401 { "error": "Invalid email or password" }` on failure.
+→ same shape. `401 { "error": "Invalid email or password"}` on failure.
 
 ### `POST /api/v1/auth/refresh`
 
@@ -171,7 +171,7 @@ Public
 Query params: `line`, `type`, `interchange=true`, `search` (trigram-backed `ILIKE` over name /
 short name / line). Cached 1 hour per parameter combination.
 
-→ `{ "data": [ … ], "meta": { "count": n } }`
+→ `{ "data": [… ], "meta": { "count": n } }`
 
 ### `GET /api/v1/stations/:id`
 
@@ -223,7 +223,7 @@ Server-side, `duration_seconds` becomes `total_time_minutes` (ceil) and `line_id
 `modes_used`.
 
 {: .warning }
-> This endpoint **always returns `201 { "message": "Logged" }`, even on failure.** The controller
+> This endpoint **always returns `201 { "message": "Logged"}`, even on failure.** The controller
 > rescues everything and logs a warning, deliberately — an analytics failure must never block
 > someone's commute. The consequence: a silent total failure looks exactly like success. Verify
 > ingestion with a `RoutePlanEvent.count`, never with a response code.
@@ -248,7 +248,7 @@ Admin only
 {: .label .label-red }
 
 All require `role == admin`; otherwise
-`403 { "error": "Forbidden", "message": "Admin access required" }`.
+`403 { "error": "Forbidden", "message": "Admin access required"}`.
 
 ### `POST /api/v1/admin/graph/routes`
 
@@ -266,12 +266,12 @@ Creates a whole line.
   "crowdFactor": 0.7, "reliability": 0.65,
 
   // either:
-  "stops": [ { "name": "…", "shortName": "…", "lat": 14.16, "lng": 121.24 }, … ],
+  "stops": [{ "name": "…", "shortName": "…", "lat": 14.16, "lng": 121.24 }, … ],
   // or:
   "passes": [
-    { "direction": "northbound", "stops": [ … ], "closesLoop": false },
-    { "direction": "southbound", "stops": [ … ], "closesLoop": true,
-      "closingPolyline": [ { "lat": …, "lng": … } ] }
+    { "direction": "northbound", "stops": [… ], "closesLoop": false },
+    { "direction": "southbound", "stops": [… ], "closesLoop": true,
+      "closingPolyline": [{ "lat": …, "lng": … } ] }
   ]
 }
 ```
@@ -292,7 +292,7 @@ Inserts one stop into an existing line, splitting or extending the edge chain an
 sequence. Subject to the three narrowing rules in
 [Backend Internals]({{ site.baseurl }}/backend#insert_stop--remove_stop--deliberately-narrow).
 
-→ `{ "data": { "lineId": "…", "stationId": "…" } }`
+→ `{ "data": { "lineId": "…", "stationId": "…"} }`
 
 ### `PATCH /api/v1/admin/stations/:id`
 
@@ -314,7 +314,7 @@ Every field is optional; only what changed is sent.
 > **`access_points` replaces the station's entire door set.** A door left out is a door deleted —
 > that is how removal works, and why the editor always sends the full list rather than a diff.
 > Omit the key entirely to leave doors untouched. Send `[]` to clear them. Send `direction` as
-> explicit JSON `null` to mean "serves every direction" — omitting the key means the server can't
+> explicit JSON `null` to mean "serves every direction"— omitting the key means the server can't
 > write NULL.
 
 ### `DELETE /api/v1/admin/stations/:id`
@@ -326,9 +326,9 @@ terminal.
 
 ```jsonc
 { "edge": {
-    "polyline_coordinates": [ { "lat": …, "lng": … }, … ],
+    "polyline_coordinates": [{ "lat": …, "lng": … }, … ],
     "bidirectional": true,
-    "direction": "northbound"      // or null to clear
+    "direction": "northbound"// or null to clear
 } }
 ```
 

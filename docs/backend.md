@@ -53,7 +53,7 @@ app/
 │           └── analytics_controller.rb summary / hotspots
 ├── models/                            15 models
 └── services/
-    └── graph_service.rb               ⚠️ 1141 lines — all graph mutation logic
+    └── graph_service.rb               Note: 1141 lines — all graph mutation logic
 ```
 
 ## `GraphService`
@@ -103,10 +103,10 @@ Builds the client-facing document. Two details matter:
 
 | Check | Message |
 |:--|:--|
-| `displayName` blank | "Display name is required." |
-| `lineID` blank | "Line ID is required." |
-| `lineID` contains a space | "Line ID must not contain spaces." |
-| `lineID` fails `LINE_ID_RE` | "Line ID must only contain uppercase letters, digits, underscores, and dots." |
+| `displayName` blank | "Display name is required."|
+| `lineID` blank | "Line ID is required."|
+| `lineID` contains a space | "Line ID must not contain spaces."|
+| `lineID` fails `LINE_ID_RE` | "Line ID must only contain uppercase letters, digits, underscores, and dots."|
 | `lineID` already has stations | *conditional* — see below |
 | `mode` not in `transport_modes` | invalid mode |
 | fewer than 2 stops | at least 2 required |
@@ -124,9 +124,9 @@ the iOS Loop Creator:
 ```jsonc
 {
   "passes": [
-    { "direction": "northbound", "stops": [ … ], "closesLoop": false },
-    { "direction": "southbound", "stops": [ … ], "closesLoop": true,
-      "closingPolyline": [ { "lat": …, "lng": … } ] }
+    { "direction": "northbound", "stops": [… ], "closesLoop": false },
+    { "direction": "southbound", "stops": [… ], "closesLoop": true,
+      "closingPolyline": [{ "lat": …, "lng": … } ] }
   ]
 }
 ```
@@ -139,12 +139,12 @@ conditions.
 ```mermaid
 flowchart TD
     S[Insert or remove a stop] --> R1{mode == train?}
-    R1 -->|yes| X1["❌ Refused"]
+    R1 -->|yes| X1["No — Refused"]
     R1 -->|no| R2{"closed loop?<br/>edge_count >= station_count"}
-    R2 -->|yes| X2["❌ Refused"]
+    R2 -->|yes| X2["No — Refused"]
     R2 -->|no| R3{"station follows<br/>PREFIX_STOP&lt;n&gt;?"}
-    R3 -->|no| X3["❌ Refused"]
-    R3 -->|yes| OK["✅ Split/merge edges,<br/>renumber, bump version"]
+    R3 -->|no| X3["No — Refused"]
+    R3 -->|yes| OK["Yes — Split/merge edges,<br/>renumber, bump version"]
 
     style X1 fill:#8b2635,color:#fff
     style X2 fill:#8b2635,color:#fff
@@ -276,7 +276,7 @@ ALLOWED_ORIGINS=http://localhost:3000
 ```
 
 To point the iOS client at a local server, swap the commented line in
-`CommuteBeh/Networking/APIConfig.swift`.
+`Gora/Networking/APIConfig.swift`.
 
 ## Migration history
 

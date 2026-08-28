@@ -341,11 +341,14 @@ class GraphService
   #    renumbering well-defined. Hand-authored named stations (trains) don't use
   #    this convention and are already excluded by #1 anyway.
   #
-  # Renumbering only touches `stations`/`edges`. It does NOT chase down every other
-  # table that might reference a station/edge id by string (saved_routes,
-  # route_plan_events, ar_world_maps, incidents) — there's no DB-level FK, so a
-  # renumbered id could leave those pointing at a since-renamed station. Accepted
-  # tradeoff: renumbering was chosen over keeping ids stable.
+  # Renumbering touches `stations`, `edges`, and `station_access_points` — the last
+  # one has a DB-level FK on `station_id` (ON DELETE CASCADE, no ON UPDATE CASCADE),
+  # so a shifted station with a surveyed door must be renamed in lockstep or the
+  # UPDATE trips the constraint. It does NOT chase down every other table that might
+  # reference a station/edge id by string (saved_routes, route_plan_events,
+  # ar_world_maps, incidents) — there's no DB-level FK there, so a renumbered id
+  # could leave those pointing at a since-renamed station. Accepted tradeoff:
+  # renumbering was chosen over keeping ids stable.
 
   def insert_stop(payload)
     ref_id   = payload[:referenceStationId] || payload["referenceStationId"]
@@ -402,13 +405,7 @@ class GraphService
     ActiveRecord::Base.transaction do
       # Shift everything at/after the insertion point up one slot — highest index
       # first so a rename target is always vacated before something else claims it.
-      n.downto(p) do |i|
-        old_id = "#{prefix}_STOP#{i}"
-        new_id = "#{prefix}_STOP#{i + 1}"
-        Station.where(station_id: old_id).update_all(station_id: new_id)
-        Edge.where(from_station: old_id).update_all(from_station: new_id)
-        Edge.where(to_station: old_id).update_all(to_station: new_id)
-      end
+      n.downto(p) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i + 1}") }
       (n - 1).downto(p) do |i|
         Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i + 1}")
       end
@@ -528,13 +525,7 @@ class GraphService
       if p == 1
         Edge.where(edge_id: "#{prefix}_SEG1").delete_all
         Station.where(station_id: "#{prefix}_STOP1").delete_all
-        2.upto(n) do |i|
-          old_id = "#{prefix}_STOP#{i}"
-          new_id = "#{prefix}_STOP#{i - 1}"
-          Station.where(station_id: old_id).update_all(station_id: new_id)
-          Edge.where(from_station: old_id).update_all(from_station: new_id)
-          Edge.where(to_station: old_id).update_all(to_station: new_id)
-        end
+        2.upto(n) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i - 1}") }
         2.upto(n - 1) do |i|
           Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i - 1}")
         end
@@ -573,13 +564,7 @@ class GraphService
         Edge.where(edge_id: "#{prefix}_SEG#{p}").delete_all
         Station.where(station_id: "#{prefix}_STOP#{p}").delete_all
 
-        (p + 1).upto(n) do |i|
-          old_id = "#{prefix}_STOP#{i}"
-          new_id = "#{prefix}_STOP#{i - 1}"
-          Station.where(station_id: old_id).update_all(station_id: new_id)
-          Edge.where(from_station: old_id).update_all(from_station: new_id)
-          Edge.where(to_station: old_id).update_all(to_station: new_id)
-        end
+        (p + 1).upto(n) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i - 1}") }
         (p + 1).upto(n - 1) do |i|
           Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i - 1}")
         end
@@ -911,6 +896,17 @@ class GraphService
     errors << { field: "lat", message: "lat must be between -90 and 90." } unless lat_f && (-90.0..90.0).cover?(lat_f)
     errors << { field: "lng", message: "lng must be between -180 and 180." } unless lng_f && (-180.0..180.0).cover?(lng_f)
     errors
+  end
+
+  # Renames one stop id everywhere it's a foreign key: the station itself, both
+  # ends of any edge, and any surveyed access point. Every table that references
+  # a "<prefix>_STOP<n>" id must be renamed here — see the ownership note above
+  # insert_stop for which tables that is and isn't.
+  def rename_stop!(old_id, new_id)
+    Station.where(station_id: old_id).update_all(station_id: new_id)
+    Edge.where(from_station: old_id).update_all(from_station: new_id)
+    Edge.where(to_station: old_id).update_all(to_station: new_id)
+    StationAccessPoint.where(station_id: old_id).update_all(station_id: new_id)
   end
 
   # Decides whether add_route may write into an *existing* line_id — the only

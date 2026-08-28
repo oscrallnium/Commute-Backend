@@ -90,13 +90,13 @@ just changed.
 
 | Action | Bumps | Busts cache |
 |:--|:--|:--|
-| `POST /admin/graph/routes` | ✅ | ✅ |
-| `DELETE /admin/graph/routes/:line_id` | ✅ | ✅ |
-| `POST /admin/stations` (insert stop) | ✅ | ✅ |
-| `PATCH /admin/stations/:id` | ✅ | ✅ |
-| `DELETE /admin/stations/:id` | ✅ | ✅ |
-| `PATCH /admin/edges/:id` | ✅ via `bump_version!` | ✅ |
-| `PATCH /admin/settings` | ✅ | ✅ |
+| `POST /admin/graph/routes` | Yes | Yes |
+| `DELETE /admin/graph/routes/:line_id` | Yes | Yes |
+| `POST /admin/stations` (insert stop) | Yes | Yes |
+| `PATCH /admin/stations/:id` | Yes | Yes |
+| `DELETE /admin/stations/:id` | Yes | Yes |
+| `PATCH /admin/edges/:id` | Yes, via `bump_version!` | Yes |
+| `PATCH /admin/settings` | Yes | Yes |
 
 Anything that changes what `assemble_graph` would emit **must** bump the version. A mutation that
 doesn't is invisible to every already-installed client until a cache TTL happens to expire and

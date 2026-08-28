@@ -6,7 +6,7 @@
 
 ## Role in the architecture
 
-`commutebeh-rails` is the **user-facing API** for CommuteBeh. It handles:
+`commutebeh-rails` is the **user-facing API** for Gora. It handles:
 - User auth (register, login, logout, token refresh, account deletion)
 - User profile and preferences
 - Saved routes (commuter bookmarks)
@@ -166,6 +166,29 @@ DELETE /api/v1/auth/account          # App Store compliance
 - **150 MB upload cap** — enforced before Active Storage processing in `ArWorldMapsController`.
 - **100-entry ring buffer** — relocalization events on `ar_world_maps.metadata` capped at 100.
 - **Analytics never block** — `AnalyticsController#route_plan` rescues all errors and returns 201 regardless, so iOS commutes are never blocked by a logging failure.
+
+---
+
+## Code principles
+
+Apply SOLID and clean code principles to new code and to edits.
+
+### SOLID
+
+- **Single responsibility** — Give each class and service one reason to change. Split a controller action that validates and persists into a service object.
+- **Open/closed** — Add behavior through a new class or strategy. Do not add a branch to an existing method for every new type.
+- **Liskov substitution** — Make a subclass work everywhere its parent works. Do not override a method to raise an error or change its contract.
+- **Interface segregation** — Depend only on the methods you call. Split a large service object into smaller ones scoped to each caller's need.
+- **Dependency inversion** — Depend on an abstraction, not a concrete class. Inject a service or client instead of hard-coding it inside a method.
+
+### Clean code
+
+- Name a variable, method, and class for what it holds or does. Do not abbreviate.
+- Keep a method short. Extract a step once the method does more than one thing.
+- Remove duplicate logic. Extract a shared method or concern instead.
+- Handle an error where you can act on it. Do not rescue an error and re-raise it unchanged.
+- Keep a method's argument list short. Pass a hash or object once the count passes three or four.
+- Avoid a comment that states what the code already shows. See "Comments in code" in the global instructions.
 
 ---
 
