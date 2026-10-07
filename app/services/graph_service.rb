@@ -333,9 +333,9 @@ class GraphService
   #    edges (northbound and southbound both touch the same physical station).
   #    Splitting/merging just one direction's edge would leave the other direction
   #    silently bypassing the change, an asymmetric graph. Out of scope.
-  # 2. Never on a closed-loop route — the closing edge is real recorded geometry
-  #    between two specific endpoints; if a terminal shifts, there's no principled
-  #    way to auto-repair that geometry. Detected via edge-count >= station-count.
+  # 2. On a closed-loop route (edge-count >= station-count), insert_stop treats the
+  #    closing edge STOP<n> -> STOP1 as an ordinary segment to split. remove_stop still
+  #    refuses loops.
   # 3. Only on stations following the auto-generated "<prefix>_STOP<n>" convention
   #    (i.e. routes built via the iOS Loop Creator) — that's what makes sequential
   #    renumbering well-defined. Hand-authored named stations (trains) don't use
@@ -377,13 +377,12 @@ class GraphService
 
     ordered = ordered_chain(line_id, prefix)
     n = ordered.length
-    if scoped_seg_count(line_id, prefix) >= n
-      return Result.new(success?: false, errors: [{ field: "base",
-                         message: "This route closes into a loop; inserting stops on closed-loop routes isn't supported yet." }])
-    end
+    closed_loop = scoped_seg_count(line_id, prefix) >= n
 
     idx = ordered.index { |s| s.station_id == ref.station_id }
     p = position == "after" ? idx + 2 : idx + 1 # 1-based target position of the new stop
+    # A loop has no head: the slot before STOP1 is the slot after STOP<n>, on the closing edge.
+    p = n + 1 if closed_loop && p == 1
 
     # Road geometry for the edges this insert creates, supplied by the client in creation
     # order, each oriented from → to (iOS fetches them from MKDirections while previewing,
@@ -400,13 +399,15 @@ class GraphService
     open_time  = (payload[:openTime]  || payload["openTime"]).presence  || ref.open_time
     close_time = (payload[:closeTime] || payload["closeTime"]).presence || ref.close_time
     new_station_id = "#{prefix}_STOP#{p}"
-    old_split_edge = (p > 1 && p <= n) ? Edge.find_by(edge_id: "#{prefix}_SEG#{p - 1}") : nil
+    splits_edge    = (p > 1 && p <= n) || closed_loop
+    old_split_edge = splits_edge ? Edge.find_by(edge_id: "#{prefix}_SEG#{p - 1}") : nil
 
     ActiveRecord::Base.transaction do
       # Shift everything at/after the insertion point up one slot — highest index
       # first so a rename target is always vacated before something else claims it.
       n.downto(p) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i + 1}") }
-      (n - 1).downto(p) do |i|
+      # A loop's closing edge is SEG<n>, so it shifts with the chain edges.
+      (closed_loop ? n : n - 1).downto(p) do |i|
         Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i + 1}")
       end
 
@@ -419,7 +420,8 @@ class GraphService
 
       if old_split_edge
         prev_id = "#{prefix}_STOP#{p - 1}"
-        next_id = "#{prefix}_STOP#{p + 1}" # was STOP(p), shifted above
+        # Was STOP(p), shifted above. A split of a loop's closing edge leads back to STOP1.
+        next_id = p == n + 1 ? "#{prefix}_STOP1" : "#{prefix}_STOP#{p + 1}"
         prev_lat, prev_lng = coords_of(prev_id)
         next_lat, next_lng = coords_of(next_id)
         poly = old_split_edge.polyline_coordinates || []
