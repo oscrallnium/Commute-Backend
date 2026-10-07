@@ -333,9 +333,9 @@ class GraphService
   #    edges (northbound and southbound both touch the same physical station).
   #    Splitting/merging just one direction's edge would leave the other direction
   #    silently bypassing the change, an asymmetric graph. Out of scope.
-  # 2. On a closed-loop route (edge-count >= station-count), insert_stop treats the
-  #    closing edge STOP<n> -> STOP1 as an ordinary segment to split. remove_stop still
-  #    refuses loops.
+  # 2. On a closed-loop route (edge-count >= station-count), the closing edge
+  #    STOP<n> -> STOP1 is an ordinary segment: insert_stop splits it and remove_stop
+  #    merges across it. The loop keeps STOP1 as its start.
   # 3. Only on stations following the auto-generated "<prefix>_STOP<n>" convention
   #    (i.e. routes built via the iOS Loop Creator) — that's what makes sequential
   #    renumbering well-defined. Hand-authored named stations (trains) don't use
@@ -516,15 +516,14 @@ class GraphService
     if n <= 2
       return Result.new(success?: false, errors: [{ field: "base", message: "A route needs at least 2 stops — delete the whole route instead." }])
     end
-    if scoped_seg_count(line_id, prefix) >= n
-      return Result.new(success?: false, errors: [{ field: "base",
-                         message: "This route closes into a loop; removing stops on closed-loop routes isn't supported yet." }])
-    end
+    closed_loop = scoped_seg_count(line_id, prefix) >= n
 
     p = ordered.index { |s| s.station_id == station.station_id } + 1 # 1-based
 
     ActiveRecord::Base.transaction do
-      if p == 1
+      if closed_loop
+        remove_loop_stop!(prefix, line_id, p, n)
+      elsif p == 1
         Edge.where(edge_id: "#{prefix}_SEG1").delete_all
         Station.where(station_id: "#{prefix}_STOP1").delete_all
         2.upto(n) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i - 1}") }
@@ -535,65 +534,11 @@ class GraphService
         Edge.where(edge_id: "#{prefix}_SEG#{n - 1}").delete_all
         Station.where(station_id: "#{prefix}_STOP#{n}").delete_all
       else
-        edge1 = Edge.find_by(edge_id: "#{prefix}_SEG#{p - 1}") # prev -> removed
-        edge2 = Edge.find_by(edge_id: "#{prefix}_SEG#{p}")     # removed -> next
-        poly1 = edge1&.polyline_coordinates || []
-        poly2 = edge2&.polyline_coordinates || []
-        # Drop the first coordinate of the second half — it duplicates the shared
-        # junction point at the station being removed (same invariant as stitching
-        # polylines across merged legs elsewhere in the app).
-        merged_poly = (poly1.empty? && poly2.empty?) ? [] : (poly1 + poly2.drop(1))
-        merged_dist = edge1&.distance_km.to_f + edge2&.distance_km.to_f
-        merged_time = edge1&.travel_time_minutes.to_f + edge2&.travel_time_minutes.to_f
-        prev_id = "#{prefix}_STOP#{p - 1}"
-
-        # Both halves must allow reverse travel for the merged edge to; a nil half (one
-        # side missing) can't vouch for anything, so it doesn't grant two-way either.
-        halves = [edge1, edge2].compact
-        merged_bidirectional = halves.any? && halves.all?(&:bidirectional)
-        # Directions should already agree — both halves come from one chain — so a
-        # mismatch means the chain is malformed. Drop the label rather than assert one.
-        directions = halves.map(&:direction).uniq
-        merged_direction = directions.length == 1 ? directions.first : nil
-        if directions.length > 1
-          Rails.logger.warn(
-            "[GraphService#remove_stop] #{prefix}: merging edges with different directions " \
-            "(#{directions.inspect}) — dropping the direction label."
-          )
-        end
-
-        Edge.where(edge_id: "#{prefix}_SEG#{p - 1}").delete_all
-        Edge.where(edge_id: "#{prefix}_SEG#{p}").delete_all
-        Station.where(station_id: "#{prefix}_STOP#{p}").delete_all
-
-        (p + 1).upto(n) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i - 1}") }
-        (p + 1).upto(n - 1) do |i|
-          Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i - 1}")
-        end
-
-        new_next_id = "#{prefix}_STOP#{p}" # was STOP(p+1), just renamed above
-        Edge.create!(
-          edge_id: "#{prefix}_SEG#{p - 1}", from_station: prev_id, to_station: new_next_id,
-          mode: edge1&.mode || edge2&.mode, line: line_id,
-          travel_time_minutes: merged_time.positive? ? merged_time : travel_time_minutes(merged_dist),
-          distance_km: merged_dist,
-          base_fare: edge1&.base_fare || edge2&.base_fare || 0,
-          fare_per_km: edge1&.fare_per_km || edge2&.fare_per_km || 0,
-          accepted_payments: edge1&.accepted_payments || edge2&.accepted_payments || [],
-          is_air_conditioned: edge1&.is_air_conditioned || edge2&.is_air_conditioned || false,
-          crowd_factor: edge1&.crowd_factor || edge2&.crowd_factor || 0.5,
-          reliability: edge1&.reliability || edge2&.reliability || 0.9,
-          # Same reasoning as edge_attrs: the merged edge inherits directionality instead
-          # of defaulting to two-way. Where the two halves disagree, the more restrictive
-          # answer wins — a one-way half means riders can't travel that stretch in reverse,
-          # and merging must not invent the ability.
-          bidirectional: merged_bidirectional, direction: merged_direction,
-          polyline_coordinates: merged_poly,
-          # Only trustworthy if BOTH source edges were — one straight/unsnapped
-          # half would make the whole merged shape suspect.
-          is_road_snapped: (edge1&.is_road_snapped || false) && (edge2&.is_road_snapped || false),
-          mk_directions_transport_type: edge1&.mk_directions_transport_type || edge2&.mk_directions_transport_type || mk_type_for(edge1&.mode)
-        )
+        merge_around_stop!(prefix, line_id, p,
+                           edge1_id: "#{prefix}_SEG#{p - 1}", edge2_id: "#{prefix}_SEG#{p}",
+                           shift_edges_through: n - 1, last_stop: n,
+                           merged_id: "#{prefix}_SEG#{p - 1}",
+                           merged_from: "#{prefix}_STOP#{p - 1}", merged_to: "#{prefix}_STOP#{p}")
       end
 
       recompute_terminals!(line_id, prefix)
@@ -898,6 +843,80 @@ class GraphService
     errors << { field: "lat", message: "lat must be between -90 and 90." } unless lat_f && (-90.0..90.0).cover?(lat_f)
     errors << { field: "lng", message: "lng must be between -180 and 180." } unless lng_f && (-180.0..180.0).cover?(lng_f)
     errors
+  end
+
+  # Deletes STOP<p> and joins its inbound and outbound edges into one edge. Stops after p
+  # and edges after edge2 shift down one slot, so `merged_from`/`merged_to` are post-shift ids.
+  def merge_around_stop!(prefix, line_id, p, edge1_id:, edge2_id:, shift_edges_through:, last_stop:,
+                         merged_id:, merged_from:, merged_to:)
+    edge1 = Edge.find_by(edge_id: edge1_id) # prev -> removed
+    edge2 = Edge.find_by(edge_id: edge2_id) # removed -> next
+    poly1 = edge1&.polyline_coordinates || []
+    poly2 = edge2&.polyline_coordinates || []
+    # Drop the first coordinate of the second half — it duplicates the shared
+    # junction point at the station being removed (same invariant as stitching
+    # polylines across merged legs elsewhere in the app).
+    merged_poly = (poly1.empty? && poly2.empty?) ? [] : (poly1 + poly2.drop(1))
+    merged_dist = edge1&.distance_km.to_f + edge2&.distance_km.to_f
+    merged_time = edge1&.travel_time_minutes.to_f + edge2&.travel_time_minutes.to_f
+
+    # Both halves must allow reverse travel for the merged edge to; a nil half (one
+    # side missing) can't vouch for anything, so it doesn't grant two-way either.
+    halves = [edge1, edge2].compact
+    merged_bidirectional = halves.any? && halves.all?(&:bidirectional)
+    # Directions should already agree — both halves come from one chain — so a
+    # mismatch means the chain is malformed. Drop the label rather than assert one.
+    directions = halves.map(&:direction).uniq
+    merged_direction = directions.length == 1 ? directions.first : nil
+    if directions.length > 1
+      Rails.logger.warn(
+        "[GraphService#remove_stop] #{prefix}: merging edges with different directions " \
+        "(#{directions.inspect}) — dropping the direction label."
+      )
+    end
+
+    Edge.where(edge_id: [edge1_id, edge2_id]).delete_all
+    Station.where(station_id: "#{prefix}_STOP#{p}").delete_all
+
+    (p + 1).upto(last_stop) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i - 1}") }
+    (p + 1).upto(shift_edges_through) do |i|
+      Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i - 1}")
+    end
+
+    Edge.create!(
+      edge_id: merged_id, from_station: merged_from, to_station: merged_to,
+      mode: edge1&.mode || edge2&.mode, line: line_id,
+      travel_time_minutes: merged_time.positive? ? merged_time : travel_time_minutes(merged_dist),
+      distance_km: merged_dist,
+      base_fare: edge1&.base_fare || edge2&.base_fare || 0,
+      fare_per_km: edge1&.fare_per_km || edge2&.fare_per_km || 0,
+      accepted_payments: edge1&.accepted_payments || edge2&.accepted_payments || [],
+      is_air_conditioned: edge1&.is_air_conditioned || edge2&.is_air_conditioned || false,
+      crowd_factor: edge1&.crowd_factor || edge2&.crowd_factor || 0.5,
+      reliability: edge1&.reliability || edge2&.reliability || 0.9,
+      # Same reasoning as edge_attrs: the merged edge inherits directionality instead
+      # of defaulting to two-way. Where the two halves disagree, the more restrictive
+      # answer wins — a one-way half means riders can't travel that stretch in reverse,
+      # and merging must not invent the ability.
+      bidirectional: merged_bidirectional, direction: merged_direction,
+      polyline_coordinates: merged_poly,
+      # Only trustworthy if BOTH source edges were — one straight/unsnapped
+      # half would make the whole merged shape suspect.
+      is_road_snapped: (edge1&.is_road_snapped || false) && (edge2&.is_road_snapped || false),
+      mk_directions_transport_type: edge1&.mk_directions_transport_type || edge2&.mk_directions_transport_type || mk_type_for(edge1&.mode)
+    )
+  end
+
+  # On a loop every stop has an inbound and an outbound edge, SEG<n> being the closing edge
+  # STOP<n> -> STOP1. Removing STOP1 or STOP<n> merges into the new closing edge SEG<n-1>.
+  def remove_loop_stop!(prefix, line_id, p, n)
+    wraps = p == 1 || p == n
+    merge_around_stop!(prefix, line_id, p,
+                       edge1_id: "#{prefix}_SEG#{p == 1 ? n : p - 1}", edge2_id: "#{prefix}_SEG#{p}",
+                       shift_edges_through: n, last_stop: n,
+                       merged_id: "#{prefix}_SEG#{wraps ? n - 1 : p - 1}",
+                       merged_from: "#{prefix}_STOP#{wraps ? n - 1 : p - 1}",
+                       merged_to: "#{prefix}_STOP#{wraps ? 1 : p}")
   end
 
   # Renames one stop id everywhere it's a foreign key: the station itself, both

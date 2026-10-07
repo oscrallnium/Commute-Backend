@@ -1,7 +1,7 @@
 require "rails_helper"
 
 # A closed loop stores STOP1..STOP<n> and n edges; SEG<n> is the closing edge STOP<n> -> STOP1.
-RSpec.describe "GraphService#insert_stop on a closed loop" do
+RSpec.describe "GraphService stop editing on a closed loop" do
   before do
     TransportMode.find_or_create_by!(id: "jeepney") do |m|
       m.display_name = "Jeepney"
@@ -64,5 +64,34 @@ RSpec.describe "GraphService#insert_stop on a closed loop" do
     expect(result.data[:station_id]).to eq("LOOP_STOP5")
     expect(chain).to include("LOOP_SEG5" => %w[LOOP_STOP5 LOOP_STOP1])
     expect(chain.size).to eq(5)
+  end
+
+  it "merges across the removed stop and shifts the closing edge" do
+    expect(GraphService.remove_stop("LOOP_STOP2").success?).to be true
+    expect(chain).to eq(
+      "LOOP_SEG1" => %w[LOOP_STOP1 LOOP_STOP2],
+      "LOOP_SEG2" => %w[LOOP_STOP2 LOOP_STOP3],
+      "LOOP_SEG3" => %w[LOOP_STOP3 LOOP_STOP1]
+    )
+  end
+
+  it "merges into a new closing edge when the last stop is removed" do
+    expect(GraphService.remove_stop("LOOP_STOP4").success?).to be true
+    expect(chain).to eq(
+      "LOOP_SEG1" => %w[LOOP_STOP1 LOOP_STOP2],
+      "LOOP_SEG2" => %w[LOOP_STOP2 LOOP_STOP3],
+      "LOOP_SEG3" => %w[LOOP_STOP3 LOOP_STOP1]
+    )
+  end
+
+  it "merges into a new closing edge when the first stop is removed" do
+    expect(GraphService.remove_stop("LOOP_STOP1").success?).to be true
+    expect(Station.where(line: "LOOP").pluck(:name).sort).to eq(%w[S2 S3 S4])
+    expect(Station.find_by(station_id: "LOOP_STOP1").name).to eq("S2")
+    expect(chain).to eq(
+      "LOOP_SEG1" => %w[LOOP_STOP1 LOOP_STOP2],
+      "LOOP_SEG2" => %w[LOOP_STOP2 LOOP_STOP3],
+      "LOOP_SEG3" => %w[LOOP_STOP3 LOOP_STOP1]
+    )
   end
 end
