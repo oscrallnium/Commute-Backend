@@ -11,6 +11,8 @@ class GraphService
   EARTH_RADIUS_KM  = 6371.0
   AVG_SPEED_KMH    = 24.0
   MIN_TRAVEL_TIME  = 2.0 # minutes
+  # A stop with the same name this close on the same chain is the same stop.
+  DUPLICATE_STOP_RADIUS_M = 5.0
 
   # Uppercase letters, digits, underscores, and dots — e.g. "STACRUZ.LRT_BUENDIA".
   LINE_ID_RE  = /\A[A-Z0-9_.]+\z/
@@ -378,6 +380,13 @@ class GraphService
     ordered = ordered_chain(line_id, prefix)
     n = ordered.length
     closed_loop = scoped_seg_count(line_id, prefix) >= n
+
+    # A retry of an insert whose response the client never received finds its own stop
+    # here. Returning that stop keeps the request idempotent and adds no second copy.
+    existing = ordered.find do |s|
+      s.name == name && haversine(s.lat.to_f, s.lng.to_f, lat, lng) * 1000 <= DUPLICATE_STOP_RADIUS_M
+    end
+    return Result.new(success?: true, data: { line_id: line_id, station_id: existing.station_id }) if existing
 
     idx = ordered.index { |s| s.station_id == ref.station_id }
     p = position == "after" ? idx + 2 : idx + 1 # 1-based target position of the new stop

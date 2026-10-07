@@ -169,26 +169,102 @@ DELETE /api/v1/auth/account          # App Store compliance
 
 ---
 
-## Code principles
+## Writing style — ASD-STE100
 
-Apply SOLID and clean code principles to new code and to edits.
+Write all prose in this repository in ASD-STE100 (Simplified Technical English). This applies
+to code comments, documentation, commit messages, and pull request bodies. It does not apply to
+user-facing text in API error messages, which stays natural.
 
-### SOLID
+- Use one word for one meaning. Do not call the same thing a "stop" in one place and a
+  "station" in another.
+- Use the active voice. Write "The service renumbers the stops", not "The stops are renumbered".
+- Use the present tense for facts and the imperative for instructions.
+- Keep procedural sentences to 20 words or fewer. Keep descriptive sentences to 25 or fewer.
+- Write one instruction per sentence.
+- Keep articles. Write "Drop the first coordinate", not "Drop first coordinate".
+- Avoid gerunds and noun clusters. Write "an edge that has no polyline", not "a polyline-less edge".
+- Do not use slang, idioms, or metaphor.
+- Start a paragraph with its main point.
 
-- **Single responsibility** — Give each class and service one reason to change. Split a controller action that validates and persists into a service object.
-- **Open/closed** — Add behavior through a new class or strategy. Do not add a branch to an existing method for every new type.
-- **Liskov substitution** — Make a subclass work everywhere its parent works. Do not override a method to raise an error or change its contract.
-- **Interface segregation** — Depend only on the methods you call. Split a large service object into smaller ones scoped to each caller's need.
-- **Dependency inversion** — Depend on an abstraction, not a concrete class. Inject a service or client instead of hard-coding it inside a method.
+---
 
-### Clean code
+## Comments
 
-- Name a variable, method, and class for what it holds or does. Do not abbreviate.
-- Keep a method short. Extract a step once the method does more than one thing.
-- Remove duplicate logic. Extract a shared method or concern instead.
-- Handle an error where you can act on it. Do not rescue an error and re-raise it unchanged.
-- Keep a method's argument list short. Pass a hash or object once the count passes three or four.
-- Avoid a comment that states what the code already shows. See "Comments in code" in the global instructions.
+A comment describes what the code does now. **Three lines is a hard ceiling** per method,
+class, or constant. Trim to the rule itself and move the rest out.
+
+```ruby
+# [Wrong] narrates history and a past bug
+# The old code wrote an empty polyline here "for Explore to snap later", but Explore never
+# wrote back, so UPLB_KANAN_SEG8 stayed empty. Fixed after the 2026-08 audit.
+poly = pin_polyline_ends(supplied_polys.first, from, to)
+
+# [Correct] states the rule and the one fact that explains it
+# The client's fetched road route is the only geometry for a head or tail insert.
+poly = pin_polyline_ends(supplied_polys.first, from, to)
+```
+
+Do not write:
+
+- What a developer asked for, or when.
+- What the code used to do, or which bug changed it. Words such as "used to", "previously",
+  "now uses", "instead of the old", and "fixed the bug where" do not belong in a comment.
+- Dates, ticket numbers, audit references, or names.
+- A restatement of the method signature or of what the code already shows.
+
+Do write a constraint when breaking it causes a defect. State it as a present-tense rule:
+
+```ruby
+# Renames one stop id in every table that holds it. A table that is missing here keeps the
+# old id and points at a different stop after a renumber.
+def rename_stop!(old_id, new_id)
+```
+
+Rationale that only explains why a change was made belongs in the commit message or the pull
+request. A long explanation belongs in a Markdown file next to the code; point to it from a
+one-line comment.
+
+---
+
+## Clean code
+
+- Give each name one clear meaning. Name a method after what it returns or does, not how it
+  does it. Do not abbreviate.
+- Keep a method to one task, and short enough to read on one screen. Extract a block when it
+  needs a comment to explain what it does — the extracted name replaces the comment.
+- Avoid a boolean argument that switches behaviour inside a method. Split it into two named
+  methods instead.
+- Keep the argument list short. Use keyword arguments once a method takes more than three.
+- Prefer a guard clause and an early return over nested conditionals.
+- Remove duplicate logic. Put a shared rule in one place, such as a service method or a
+  concern, and call it from every site.
+- Handle an error where you can act on it. Do not rescue an error only to re-raise it
+  unchanged, and do not rescue `StandardError` to hide a defect.
+- Remove dead code and commented-out code. Git history keeps the old version.
+- Keep controllers thin. A controller reads params, calls one service, and renders the result.
+  Validation and persistence rules live in the service or the model.
+- Treat an N+1 query as a defect. Use `includes` for every association that a list endpoint
+  serialises.
+
+---
+
+## SOLID
+
+- **Single responsibility** — give each class one reason to change. Split a service that
+  parses input, writes rows, and formats output into separate objects.
+- **Open/closed** — add behaviour through a new class, method, or strategy. Do not add a branch
+  to a shared method for every new case.
+- **Liskov substitution** — a subclass or a duck-typed collaborator honours every promise of
+  the type it replaces. Do not override a method to raise or to change its return shape.
+- **Interface segregation** — depend only on the methods you call. Split a large service so
+  that each caller gets the small interface it needs.
+- **Dependency inversion** — pass a collaborator in, for example through `initialize`, when a
+  test needs to replace it. Do not construct a network client or an external service inside
+  the method that uses it.
+
+Apply these principles at the level the code already uses: controllers, service objects such as
+`GraphService`, and models. Do not add a layer of indirection where one concrete class already
+serves every caller.
 
 ---
 
