@@ -424,7 +424,9 @@ class GraphService
         next_id = p == n + 1 ? "#{prefix}_STOP1" : "#{prefix}_STOP#{p + 1}"
         prev_lat, prev_lng = coords_of(prev_id)
         next_lat, next_lng = coords_of(next_id)
+        # A polyline with fewer than two points draws nothing, so it counts as empty here.
         poly = old_split_edge.polyline_coordinates || []
+        poly = [] if poly.length < 2
 
         # Nothing to slice: the segment itself has no geometry (this is the state a
         # pre-fix head/tail insert left behind). Both halves take the client's fetched
