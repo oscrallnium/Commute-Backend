@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 20) do
+ActiveRecord::Schema[7.2].define(version: 21) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -119,6 +119,7 @@ ActiveRecord::Schema[7.2].define(version: 20) do
     t.string "mode"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "last_stop_number", default: 0, null: false
   end
 
   create_table "payment_methods", id: :string, force: :cascade do |t|
@@ -193,6 +194,8 @@ ActiveRecord::Schema[7.2].define(version: 20) do
     t.string "close_time", default: "23:00", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "sequence"
+    t.index ["line", "sequence"], name: "index_stations_on_line_and_sequence"
     t.index ["line"], name: "index_stations_on_line"
     t.index ["name"], name: "idx_stations_name_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["type"], name: "index_stations_on_type"

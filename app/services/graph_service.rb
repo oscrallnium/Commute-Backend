@@ -14,8 +14,12 @@ class GraphService
   # A stop with the same name this close on the same chain is the same stop.
   DUPLICATE_STOP_RADIUS_M = 5.0
 
-  # Uppercase letters, digits, underscores, and dots — e.g. "STACRUZ.LRT_BUENDIA".
-  LINE_ID_RE  = /\A[A-Z0-9_.]+\z/
+  # Rule for a new line id: uppercase, digits, single underscores. No hyphen, no dot.
+  NEW_LINE_ID_RE    = /\A[A-Z][A-Z0-9]*(_[A-Z0-9]+)*\z/
+  # Rule for a line id that already has stations. It still accepts dots, e.g. "STACRUZ.LRT_BUENDIA".
+  LEGACY_LINE_ID_RE = /\A[A-Z0-9_.]+\z/
+  # A generated stop id: the chain, then `_STOP<n>` (legacy) or `_S<n>`.
+  STOP_ID_RE  = /\A(.+)_(?:STOP|S)(\d+)\z/
   TIME_RE     = /\A([01]\d|2[0-3]):[0-5]\d\z/
 
   Result = Struct.new(:success?, :data, :errors, keyword_init: true)
@@ -80,93 +84,150 @@ class GraphService
     stations = []
     edges    = []
 
-    passes.each do |pass|
-      direction = pass[:direction]
-      stops     = pass[:stops]
-      # One-wayness used to be derived from the direction label (`bidirectional:
-      # direction.nil?`), which made the two inseparable: an untagged route was always
-      # two-way. That forced any genuinely one-way route with no meaningful compass
-      # direction — a jeepney circuit that runs out to a terminus and back along the
-      # same corridor on the *other* side of the road — to either invent a direction
-      # tag or accept reverse edges. Reverse edges there are actively wrong: they let
-      # the router walk the outbound stop sequence backwards and tell a homebound rider
-      # to alight at a stop that only serves outbound traffic.
-      #
-      # An explicit `bidirectional` on the pass now wins; when it's absent the old rule
-      # still applies, so existing payloads (iOS Loop Creator, web admin flat shape)
-      # and every route already in the database behave exactly as before.
-      bidirectional = pass[:bidirectional].nil? ? direction.nil? : pass[:bidirectional]
-      # A direction-less pass keeps the original unscoped IDs (`LINE_STOP1`, `LINE_SEG1`)
-      # so existing routes/web-admin payloads are unaffected. A northbound/southbound
-      # pass gets its own ID namespace (`LINE_NB_STOP1`) since those stops are modeled as
-      # independent stations (real jeepney/bus stops on opposite one-way streets usually
-      # sit at different corners) — this also lets both passes coexist under one lineID
-      # without station_id collisions.
-      tag       = direction_tag(direction)
-      id_prefix = tag ? "#{line_id}_#{tag}" : line_id
+    ActiveRecord::Base.transaction do
+      # The line row is locked until commit, so two writers cannot take the same stop number.
+      line_record = lock_line!(line_id, display_name: display_name, mode: mode)
+      last_stop_number = line_record.last_stop_number
 
-      stops.each_with_index do |stop, i|
-        stop_name  = stop[:name] || stop["name"]
-        stop_lat   = (stop[:lat] || stop["lat"]).to_f
-        stop_lng   = (stop[:lng] || stop["lng"]).to_f
-        short_name = stop[:shortName] || stop["shortName"] || derive_short_name(stop_name)
-        stop_id    = "#{id_prefix}_STOP#{i + 1}"
+      passes.each do |pass|
+        direction = pass[:direction]
+        stops     = pass[:stops]
+        # One-wayness used to be derived from the direction label (`bidirectional:
+        # direction.nil?`), which made the two inseparable: an untagged route was always
+        # two-way. That forced any genuinely one-way route with no meaningful compass
+        # direction — a jeepney circuit that runs out to a terminus and back along the
+        # same corridor on the *other* side of the road — to either invent a direction
+        # tag or accept reverse edges. Reverse edges there are actively wrong: they let
+        # the router walk the outbound stop sequence backwards and tell a homebound rider
+        # to alight at a stop that only serves outbound traffic.
+        #
+        # An explicit `bidirectional` on the pass now wins; when it's absent the old rule
+        # still applies, so existing payloads (iOS Loop Creator, web admin flat shape)
+        # and every route already in the database behave exactly as before.
+        bidirectional = pass[:bidirectional].nil? ? direction.nil? : pass[:bidirectional]
+        # A direction-less pass uses the line id as its chain (`LINE_S1`). A northbound or
+        # southbound pass gets its own chain (`LINE_NB_S1`), so both passes share one line id.
+        tag       = direction_tag(direction)
+        id_prefix = tag ? "#{line_id}_#{tag}" : line_id
 
-        stations << {
-          station_id: stop_id,
-          name: stop_name,
-          short_name: short_name,
-          line: line_id,
-          type: mode,
-          lat: stop_lat,
-          lng: stop_lng,
-          is_terminal: i.zero? || i == stops.length - 1,
-          is_interchange: false,
-          amenities: [],
-          open_time: payload[:openTime] || payload["openTime"] || "05:00",
-          close_time: payload[:closeTime] || payload["closeTime"] || "23:00",
-          created_at: Time.current,
-          updated_at: Time.current
-        }
+        stop_ids = []
+        stops.each_with_index do |stop, i|
+          stop_name  = stop[:name] || stop["name"]
+          stop_lat   = (stop[:lat] || stop["lat"]).to_f
+          stop_lng   = (stop[:lng] || stop["lng"]).to_f
+          short_name = stop[:shortName] || stop["shortName"] || derive_short_name(stop_name)
+          stop_id    = "#{id_prefix}_S#{last_stop_number += 1}"
+          stop_ids << stop_id
 
-        # Build edge from previous stop to this stop
-        next if i.zero?
+          stations << {
+            station_id: stop_id,
+            name: stop_name,
+            short_name: short_name,
+            line: line_id,
+            sequence: i + 1,
+            type: mode,
+            lat: stop_lat,
+            lng: stop_lng,
+            is_terminal: i.zero? || i == stops.length - 1,
+            is_interchange: false,
+            amenities: [],
+            open_time: payload[:openTime] || payload["openTime"] || "05:00",
+            close_time: payload[:closeTime] || payload["closeTime"] || "23:00",
+            created_at: Time.current,
+            updated_at: Time.current
+          }
 
-        prev_stop = stops[i - 1]
-        prev_lat  = (prev_stop[:lat] || prev_stop["lat"]).to_f
-        prev_lng  = (prev_stop[:lng] || prev_stop["lng"]).to_f
-        edge_id   = "#{id_prefix}_SEG#{i}"
-        from_id   = "#{id_prefix}_STOP#{i}"
+          # Build edge from previous stop to this stop
+          next if i.zero?
 
-        # Optional per-segment polyline (road-following points from the client, e.g. an
-        # MKDirections-snapped trace) — when present, use its actual length instead of the
-        # prev/current stop haversine chord, and persist the points instead of discarding
-        # them. Falls back to a straight two-point chord for callers that don't send one
-        # (existing web-admin payloads keep working unchanged).
-        raw_polyline = stop[:polyline] || stop["polyline"] || []
-        poly_points = raw_polyline.filter_map do |p|
+          prev_stop = stops[i - 1]
+          prev_lat  = (prev_stop[:lat] || prev_stop["lat"]).to_f
+          prev_lng  = (prev_stop[:lng] || prev_stop["lng"]).to_f
+          from_id   = stop_ids[i - 1]
+          edge_id   = line_edge_id(from_id, stop_id)
+
+          # Optional per-segment polyline (road-following points from the client, e.g. an
+          # MKDirections-snapped trace) — when present, use its actual length instead of the
+          # prev/current stop haversine chord, and persist the points instead of discarding
+          # them. Falls back to a straight two-point chord for callers that don't send one
+          # (existing web-admin payloads keep working unchanged).
+          raw_polyline = stop[:polyline] || stop["polyline"] || []
+          poly_points = raw_polyline.filter_map do |p|
+            lat = p[:lat] || p["lat"]
+            lng = p[:lng] || p["lng"]
+            next if lat.nil? || lng.nil?
+            { lat: lat.to_f, lng: lng.to_f }
+          end
+
+          if poly_points.length >= 2
+            dist_km = poly_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
+          else
+            poly_points = []
+            dist_km = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
+          end
+          time_min = travel_time_minutes(dist_km)
+
+          edges << {
+            edge_id: edge_id,
+            from_station: from_id,
+            to_station: stop_id,
+            mode: mode,
+            line: line_id,
+            travel_time_minutes: time_min,
+            distance_km: dist_km,
+            base_fare: payload[:baseFare].to_f,
+            fare_per_km: payload[:farePerKm].to_f,
+            accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
+            is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
+            crowd_factor: payload[:crowdFactor].to_f,
+            reliability: payload[:reliability].to_f,
+            bidirectional: bidirectional,
+            direction: direction,
+            polyline_coordinates: poly_points,
+            mk_directions_transport_type: mk_type_for(mode),
+            is_road_snapped: pass[:is_road_snapped],
+            created_at: Time.current,
+            updated_at: Time.current
+          }
+        end
+
+        # Closing (loop-back) segment — only meaningful for a direction-less pass (a
+        # northbound/southbound leg is inherently one-way, so the client never sends
+        # closesLoop for those); honored here regardless of direction since nothing
+        # downstream assumes otherwise.
+        next unless pass[:closes_loop] && stops.length >= 2
+
+        first_id   = stop_ids.first
+        last_id    = stop_ids.last
+        first_stop = stops.first
+        last_stop  = stops.last
+        first_lat  = (first_stop[:lat] || first_stop["lat"]).to_f
+        first_lng  = (first_stop[:lng] || first_stop["lng"]).to_f
+        last_lat   = (last_stop[:lat]  || last_stop["lat"]).to_f
+        last_lng   = (last_stop[:lng]  || last_stop["lng"]).to_f
+
+        closing_points = pass[:closing_polyline].filter_map do |p|
           lat = p[:lat] || p["lat"]
           lng = p[:lng] || p["lng"]
           next if lat.nil? || lng.nil?
           { lat: lat.to_f, lng: lng.to_f }
         end
 
-        if poly_points.length >= 2
-          dist_km = poly_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
+        if closing_points.length >= 2
+          closing_dist = closing_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
         else
-          poly_points = []
-          dist_km = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
+          closing_points = []
+          closing_dist = haversine(last_lat, last_lng, first_lat, first_lng)
         end
-        time_min = travel_time_minutes(dist_km)
 
         edges << {
-          edge_id: edge_id,
-          from_station: from_id,
-          to_station: stop_id,
+          edge_id: line_edge_id(last_id, first_id),
+          from_station: last_id,
+          to_station: first_id,
           mode: mode,
           line: line_id,
-          travel_time_minutes: time_min,
-          distance_km: dist_km,
+          travel_time_minutes: travel_time_minutes(closing_dist),
+          distance_km: closing_dist,
           base_fare: payload[:baseFare].to_f,
           fare_per_km: payload[:farePerKm].to_f,
           accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
@@ -175,7 +236,7 @@ class GraphService
           reliability: payload[:reliability].to_f,
           bidirectional: bidirectional,
           direction: direction,
-          polyline_coordinates: poly_points,
+          polyline_coordinates: closing_points,
           mk_directions_transport_type: mk_type_for(mode),
           is_road_snapped: pass[:is_road_snapped],
           created_at: Time.current,
@@ -183,58 +244,6 @@ class GraphService
         }
       end
 
-      # Closing (loop-back) segment — only meaningful for a direction-less pass (a
-      # northbound/southbound leg is inherently one-way, so the client never sends
-      # closesLoop for those); honored here regardless of direction since nothing
-      # downstream assumes otherwise.
-      next unless pass[:closes_loop] && stops.length >= 2
-
-      first_stop = stops.first
-      last_stop  = stops.last
-      first_lat  = (first_stop[:lat] || first_stop["lat"]).to_f
-      first_lng  = (first_stop[:lng] || first_stop["lng"]).to_f
-      last_lat   = (last_stop[:lat]  || last_stop["lat"]).to_f
-      last_lng   = (last_stop[:lng]  || last_stop["lng"]).to_f
-
-      closing_points = pass[:closing_polyline].filter_map do |p|
-        lat = p[:lat] || p["lat"]
-        lng = p[:lng] || p["lng"]
-        next if lat.nil? || lng.nil?
-        { lat: lat.to_f, lng: lng.to_f }
-      end
-
-      if closing_points.length >= 2
-        closing_dist = closing_points.each_cons(2).sum { |a, b| haversine(a[:lat], a[:lng], b[:lat], b[:lng]) }
-      else
-        closing_points = []
-        closing_dist = haversine(last_lat, last_lng, first_lat, first_lng)
-      end
-
-      edges << {
-        edge_id: "#{id_prefix}_SEG#{stops.length}",
-        from_station: "#{id_prefix}_STOP#{stops.length}",
-        to_station: "#{id_prefix}_STOP1",
-        mode: mode,
-        line: line_id,
-        travel_time_minutes: travel_time_minutes(closing_dist),
-        distance_km: closing_dist,
-        base_fare: payload[:baseFare].to_f,
-        fare_per_km: payload[:farePerKm].to_f,
-        accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
-        is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
-        crowd_factor: payload[:crowdFactor].to_f,
-        reliability: payload[:reliability].to_f,
-        bidirectional: bidirectional,
-        direction: direction,
-        polyline_coordinates: closing_points,
-        mk_directions_transport_type: mk_type_for(mode),
-        is_road_snapped: pass[:is_road_snapped],
-        created_at: Time.current,
-        updated_at: Time.current
-      }
-    end
-
-    ActiveRecord::Base.transaction do
       # Insert stations — skip duplicates. `record_timestamps: false` because the hashes
       # already set created_at/updated_at explicitly; without this, Rails 7.2's upsert_all
       # additionally injects its own `updated_at` into the ON CONFLICT SET clause, colliding
@@ -251,25 +260,9 @@ class GraphService
                    .where.not("? = ANY(lines)", line_id)
                    .update_all("lines = array_append(lines, '#{line_id.gsub("'", "''")}')")
 
-      # `validate` above has already required displayName on this payload since before
-      # this line existed — the name was checked and then thrown away every time a route
-      # was created. Persisting it here is what makes GET /api/v1/graph's `lines` section
-      # (see #assemble_graph) actually have a name for a route the moment it is added,
-      # not just for the ones backfilled in migration 018. `update_only: [:display_name,
-      # :mode, :updated_at]`, not create-only: re-adding stops to an existing lineID (the
-      # normal "extend a route" flow) resubmits the same displayName, and a caller
-      # correcting a typo in the name should not need a separate endpoint for it.
-      #
-      # `record_timestamps: false` for the same reason it is on the Station/Edge
-      # upserts above: the hash already sets updated_at, and without this Rails 7.2's
-      # upsert additionally injects its own into the ON CONFLICT SET clause, colliding
-      # with the one in update_only: and raising "multiple assignments to same column."
-      Line.upsert(
-        { id: line_id, display_name: display_name, mode: mode,
-          created_at: Time.current, updated_at: Time.current },
-        unique_by: :id, update_only: [:display_name, :mode, :updated_at],
-        record_timestamps: false
-      )
+      # Persists the display name for GET /api/v1/graph's `lines` section. A repeated lineID
+      # (the "extend a route" flow) also corrects the name, and stores the stop counter.
+      line_record.update!(display_name: display_name, mode: mode, last_stop_number: last_stop_number)
 
       bump_graph_version!
     end
@@ -307,8 +300,13 @@ class GraphService
     end
 
     ActiveRecord::Base.transaction do
-      # Edges reference stations — delete edges first to avoid FK issues
-      edge_count    = Edge.where(line: line_id).delete_all
+      # Includes the INTERCHANGE edges that join this line to another line. Edges on
+      # other lines that point at a deleted station leave the graph inconsistent.
+      station_ids   = Station.where(line: line_id).pluck(:station_id)
+      edge_count    = Edge.where(line: line_id)
+                          .or(Edge.where(from_station: station_ids))
+                          .or(Edge.where(to_station: station_ids))
+                          .delete_all
       station_count = Station.where(line: line_id).delete_all
 
       # Remove lineID from transport_mode lines arrays
@@ -329,28 +327,17 @@ class GraphService
 
   # ── insert_stop / remove_stop ────────────────────────────────────────────────
   #
-  # Deliberately scoped to the one case this can be done safely and unambiguously:
+  # Supported only where the change is unambiguous:
   #
-  # 1. Never on `mode == "train"` — MRT/LRT stations are shared by both directions'
-  #    edges (northbound and southbound both touch the same physical station).
-  #    Splitting/merging just one direction's edge would leave the other direction
-  #    silently bypassing the change, an asymmetric graph. Out of scope.
-  # 2. On a closed-loop route (edge-count >= station-count), the closing edge
-  #    STOP<n> -> STOP1 is an ordinary segment: insert_stop splits it and remove_stop
-  #    merges across it. The loop keeps STOP1 as its start.
-  # 3. Only on stations following the auto-generated "<prefix>_STOP<n>" convention
-  #    (i.e. routes built via the iOS Loop Creator) — that's what makes sequential
-  #    renumbering well-defined. Hand-authored named stations (trains) don't use
-  #    this convention and are already excluded by #1 anyway.
+  # 1. Never on `mode == "train"`. MRT and LRT stations serve both directions, so a change
+  #    to one direction's edge would leave the other direction out of step.
+  # 2. A closed loop has an edge from its last stop to its first. That edge is an ordinary
+  #    segment: insert_stop splits it and remove_stop merges across it.
+  # 3. Only on stations whose id ends in `_STOP<n>` or `_S<n>`. Those ids form a chain.
   #
-  # Renumbering touches `stations`, `edges`, and `station_access_points` — the last
-  # one has a DB-level FK on `station_id` (ON DELETE CASCADE, no ON UPDATE CASCADE),
-  # so a shifted station with a surveyed door must be renamed in lockstep or the
-  # UPDATE trips the constraint. It does NOT chase down every other table that might
-  # reference a station/edge id by string (saved_routes, route_plan_events,
-  # ar_world_maps, incidents) — there's no DB-level FK there, so a renumbered id
-  # could leave those pointing at a since-renamed station. Accepted tradeoff:
-  # renumbering was chosen over keeping ids stable.
+  # Both methods change `stations.sequence` and the line edges only. A station id and an
+  # edge id never change, because tables such as saved_routes, incidents, and ar_world_maps
+  # store station ids with no foreign key.
 
   def insert_stop(payload)
     ref_id   = payload[:referenceStationId] || payload["referenceStationId"]
@@ -371,7 +358,7 @@ class GraphService
     end
 
     line_id = ref.line
-    prefix  = sequence_prefix(ref.station_id)
+    prefix  = chain_prefix(ref.station_id)
     unless prefix
       return Result.new(success?: false, errors: [{ field: "referenceStationId",
                          message: "This station doesn't use the standard stop-numbering scheme; inserting isn't supported for it." }])
@@ -379,7 +366,7 @@ class GraphService
 
     ordered = ordered_chain(line_id, prefix)
     n = ordered.length
-    closed_loop = scoped_seg_count(line_id, prefix) >= n
+    closed_loop = closed_loop?(line_id, ordered)
 
     # A retry of an insert whose response the client never received finds its own stop
     # here. Returning that stop keeps the request idempotent and adds no second copy.
@@ -390,16 +377,15 @@ class GraphService
 
     idx = ordered.index { |s| s.station_id == ref.station_id }
     p = position == "after" ? idx + 2 : idx + 1 # 1-based target position of the new stop
-    # A loop has no head: the slot before STOP1 is the slot after STOP<n>, on the closing edge.
+    # A loop has no head: the slot before the first stop is the slot after the last stop.
     p = n + 1 if closed_loop && p == 1
 
+    prev_stop = p > 1 ? ordered[p - 2] : nil
+    next_stop = p <= n ? ordered[p - 1] : (closed_loop ? ordered.first : nil)
+    old_split_edge = prev_stop && next_stop ? find_chain_edge(line_id, prev_stop, next_stop) : nil
+
     # Road geometry for the edges this insert creates, supplied by the client in creation
-    # order, each oriented from → to (iOS fetches them from MKDirections while previewing,
-    # so what the admin approved on screen is exactly what lands here).
-    #
-    # Used only where there is nothing to slice: a head/tail insert, or a mid-chain insert
-    # into a segment that has no polyline of its own. A mid-chain split of real recorded
-    # geometry ignores it — that polyline is better than anything fetched fresh.
+    # order, each oriented from → to. A mid-chain split of recorded geometry ignores it.
     supplied_polys = normalize_supplied_polylines(
       payload[:newEdgePolylines] || payload["newEdgePolylines"]
     )
@@ -407,52 +393,38 @@ class GraphService
     short_name = (payload[:shortName] || payload["shortName"]).presence || derive_short_name(name)
     open_time  = (payload[:openTime]  || payload["openTime"]).presence  || ref.open_time
     close_time = (payload[:closeTime] || payload["closeTime"]).presence || ref.close_time
-    new_station_id = "#{prefix}_STOP#{p}"
-    splits_edge    = (p > 1 && p <= n) || closed_loop
-    old_split_edge = splits_edge ? Edge.find_by(edge_id: "#{prefix}_SEG#{p - 1}") : nil
+    new_sequence   = p <= n ? ordered[p - 1].sequence : ordered.last.sequence + 1
+    new_station_id = nil
 
     ActiveRecord::Base.transaction do
-      # Shift everything at/after the insertion point up one slot — highest index
-      # first so a rename target is always vacated before something else claims it.
-      n.downto(p) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i + 1}") }
-      # A loop's closing edge is SEG<n>, so it shifts with the chain edges.
-      (closed_loop ? n : n - 1).downto(p) do |i|
-        Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i + 1}")
-      end
+      line_record = lock_line!(line_id, display_name: line_id, mode: ref.type)
+      new_station_id = "#{prefix}_S#{line_record.last_stop_number + 1}"
+      line_record.update!(last_stop_number: line_record.last_stop_number + 1)
+      Station.where(station_id: ordered.drop(p - 1).map(&:station_id)).update_all("sequence = sequence + 1")
 
       Station.create!(
         station_id: new_station_id, name: name, short_name: short_name,
-        line: line_id, type: ref.type, lat: lat, lng: lng,
+        line: line_id, sequence: new_sequence, type: ref.type, lat: lat, lng: lng,
         is_terminal: false, is_interchange: false, amenities: [],
         open_time: open_time, close_time: close_time
       )
 
       if old_split_edge
-        prev_id = "#{prefix}_STOP#{p - 1}"
-        # Was STOP(p), shifted above. A split of a loop's closing edge leads back to STOP1.
-        next_id = p == n + 1 ? "#{prefix}_STOP1" : "#{prefix}_STOP#{p + 1}"
-        prev_lat, prev_lng = coords_of(prev_id)
-        next_lat, next_lng = coords_of(next_id)
+        prev_lat, prev_lng = coords_of(prev_stop.station_id)
+        next_lat, next_lng = coords_of(next_stop.station_id)
         # A polyline with fewer than two points draws nothing, so it counts as empty here.
         poly = old_split_edge.polyline_coordinates || []
         poly = [] if poly.length < 2
 
-        # Nothing to slice: the segment itself has no geometry (this is the state a
-        # pre-fix head/tail insert left behind). Both halves take the client's fetched
-        # road routes instead, or stay empty if it couldn't supply them.
+        # With nothing to slice, both halves take the client's fetched road routes, or stay
+        # empty when the client supplied none.
         if poly.empty? && supplied_polys.length == 2
           first_half  = pin_polyline_ends(supplied_polys[0], [prev_lat, prev_lng], [lat, lng])
           second_half = pin_polyline_ends(supplied_polys[1], [lat, lng], [next_lat, next_lng])
         else
           split_idx = split_point_index(poly, lat, lng)
-          # Keep both halves drawable. Splitting on the first or last vertex hands one
-          # side a single point, which is no polyline at all — the same "0 waypoints"
-          # symptom a head/tail insert used to produce, just from the other direction.
-          # Clamping one vertex in costs nothing geometrically (the stop is at the
-          # segment's end either way) and leaves both halves with a real line. A 2-point
-          # polyline can't be split into two drawable halves at all; it is already a
-          # chord, so it is left as-is and the resulting stub can be repaired with
-          # "Snap to Roads" in the edge editor.
+          # Both halves need two points to draw. Clamping the split one vertex inside the
+          # polyline gives that. A two-point polyline is a chord and stays whole.
           split_idx = split_idx.clamp(1, poly.length - 2) if poly.length >= 3
           first_half  = poly.empty? ? [] : poly[0..split_idx]
           second_half = poly.empty? ? [] : poly[split_idx..-1]
@@ -461,40 +433,32 @@ class GraphService
         dist1 = poly_length_km(first_half)  || haversine(prev_lat, prev_lng, lat, lng)
         dist2 = poly_length_km(second_half) || haversine(lat, lng, next_lat, next_lng)
 
-        # A sliced half inherits old_split_edge's trustworthiness; a fetched half is a road
-        # route by construction.
-        Edge.where(edge_id: old_split_edge.edge_id).delete_all
         # Sliced halves inherit the original's trustworthiness; fetched halves are road
         # routes by construction, so either way "snapped" tracks whether there is geometry.
+        old_split_edge.delete
         halves_snapped = poly.empty? ? first_half.any? : old_split_edge.is_road_snapped
-        Edge.create!(edge_attrs(old_split_edge, edge_id: "#{prefix}_SEG#{p - 1}",
-                                from: prev_id, to: new_station_id, distance_km: dist1, polyline: first_half,
+        Edge.create!(edge_attrs(old_split_edge, edge_id: line_edge_id(prev_stop.station_id, new_station_id),
+                                from: prev_stop.station_id, to: new_station_id, distance_km: dist1, polyline: first_half,
                                 is_road_snapped: halves_snapped))
-        Edge.create!(edge_attrs(old_split_edge, edge_id: "#{prefix}_SEG#{p}",
-                                from: new_station_id, to: next_id, distance_km: dist2, polyline: second_half,
+        Edge.create!(edge_attrs(old_split_edge, edge_id: line_edge_id(new_station_id, next_stop.station_id),
+                                from: new_station_id, to: next_stop.station_id, distance_km: dist2, polyline: second_half,
                                 is_road_snapped: halves_snapped))
       elsif p == 1
-        template = Edge.find_by(edge_id: "#{prefix}_SEG2") # old SEG1, already shifted
-        next_id = "#{prefix}_STOP2"
-        next_lat, next_lng = coords_of(next_id)
-        # There is no existing geometry to slice here, so the client's fetched road route
-        # is the only real geometry available. Without it this edge used to be written
-        # empty "for Explore to road-snap later" — but Explore only ever snapped into its
-        # own in-memory cache and never wrote back, so the edge stayed empty forever and
-        # the route drew nothing between the new stop and its neighbour.
+        template = find_chain_edge(line_id, ordered[0], ordered[1])
+        next_lat, next_lng = coords_of(next_stop.station_id)
+        # The client's fetched road route is the only geometry for a head or tail insert.
         poly = pin_polyline_ends(supplied_polys.first, [lat, lng], [next_lat, next_lng])
         dist = poly_length_km(poly) || haversine(lat, lng, next_lat, next_lng)
-        Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG1",
-                                from: new_station_id, to: next_id, distance_km: dist, polyline: poly,
+        Edge.create!(edge_attrs(template, edge_id: line_edge_id(new_station_id, next_stop.station_id),
+                                from: new_station_id, to: next_stop.station_id, distance_km: dist, polyline: poly,
                                 is_road_snapped: poly.any?, mode: ref.type, line: line_id))
       else # p == n + 1 — append after the last stop
-        template = Edge.find_by(edge_id: "#{prefix}_SEG#{n - 1}")
-        prev_id = "#{prefix}_STOP#{n}"
-        prev_lat, prev_lng = coords_of(prev_id)
+        template = find_chain_edge(line_id, ordered[n - 2], ordered[n - 1])
+        prev_lat, prev_lng = coords_of(prev_stop.station_id)
         poly = pin_polyline_ends(supplied_polys.first, [prev_lat, prev_lng], [lat, lng])
         dist = poly_length_km(poly) || haversine(prev_lat, prev_lng, lat, lng)
-        Edge.create!(edge_attrs(template, edge_id: "#{prefix}_SEG#{n}",
-                                from: prev_id, to: new_station_id, distance_km: dist, polyline: poly,
+        Edge.create!(edge_attrs(template, edge_id: line_edge_id(prev_stop.station_id, new_station_id),
+                                from: prev_stop.station_id, to: new_station_id, distance_km: dist, polyline: poly,
                                 is_road_snapped: poly.any?, mode: ref.type, line: line_id))
       end
 
@@ -516,7 +480,7 @@ class GraphService
     end
 
     line_id = station.line
-    prefix  = sequence_prefix(station.station_id)
+    prefix  = chain_prefix(station.station_id)
     unless prefix
       return Result.new(success?: false, errors: [{ field: "id",
                          message: "This station doesn't use the standard stop-numbering scheme; removing isn't supported for it." }])
@@ -527,30 +491,23 @@ class GraphService
     if n <= 2
       return Result.new(success?: false, errors: [{ field: "base", message: "A route needs at least 2 stops — delete the whole route instead." }])
     end
-    closed_loop = scoped_seg_count(line_id, prefix) >= n
+    closed_loop = closed_loop?(line_id, ordered)
 
-    p = ordered.index { |s| s.station_id == station.station_id } + 1 # 1-based
+    idx = ordered.index { |s| s.station_id == station.station_id }
+    # A loop wraps: the stop before the first is the last, and the stop after the last is the first.
+    prev_stop = idx.zero? && !closed_loop ? nil : ordered[idx - 1]
+    next_stop = idx == n - 1 && !closed_loop ? nil : ordered[(idx + 1) % n]
 
     ActiveRecord::Base.transaction do
-      if closed_loop
-        remove_loop_stop!(prefix, line_id, p, n)
-      elsif p == 1
-        Edge.where(edge_id: "#{prefix}_SEG1").delete_all
-        Station.where(station_id: "#{prefix}_STOP1").delete_all
-        2.upto(n) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i - 1}") }
-        2.upto(n - 1) do |i|
-          Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i - 1}")
-        end
-      elsif p == n
-        Edge.where(edge_id: "#{prefix}_SEG#{n - 1}").delete_all
-        Station.where(station_id: "#{prefix}_STOP#{n}").delete_all
-      else
-        merge_around_stop!(prefix, line_id, p,
-                           edge1_id: "#{prefix}_SEG#{p - 1}", edge2_id: "#{prefix}_SEG#{p}",
-                           shift_edges_through: n - 1, last_stop: n,
-                           merged_id: "#{prefix}_SEG#{p - 1}",
-                           merged_from: "#{prefix}_STOP#{p - 1}", merged_to: "#{prefix}_STOP#{p}")
+      merged = if prev_stop && next_stop
+        merged_edge_attrs(find_chain_edge(line_id, prev_stop, station), find_chain_edge(line_id, station, next_stop),
+                          line_id: line_id, from_id: prev_stop.station_id, to_id: next_stop.station_id)
       end
+
+      Edge.where(from_station: station.station_id).or(Edge.where(to_station: station.station_id)).delete_all
+      Station.where(station_id: station.station_id).delete_all
+      Station.where(station_id: ordered.drop(idx + 1).map(&:station_id)).update_all("sequence = sequence - 1")
+      Edge.create!(merged) if merged
 
       recompute_terminals!(line_id, prefix)
       bump_graph_version!
@@ -623,13 +580,16 @@ class GraphService
     errors << { field: "displayName", message: "Display name is required." } if display_name.blank?
 
     line_id = payload[:lineID] || payload["lineID"]
+    line_exists = line_id.present? && Station.exists?(line: line_id)
     if line_id.blank?
       errors << { field: "lineID", message: "Line ID is required." }
     elsif line_id.include?(" ")
       errors << { field: "lineID", message: "Line ID must not contain spaces." }
-    elsif line_id !~ LINE_ID_RE
+    elsif line_exists && line_id !~ LEGACY_LINE_ID_RE
       errors << { field: "lineID", message: "Line ID must only contain uppercase letters, digits, underscores, and dots." }
-    elsif Station.exists?(line: line_id)
+    elsif !line_exists && line_id !~ NEW_LINE_ID_RE
+      errors << { field: "lineID", message: "Line ID must start with an uppercase letter and use only uppercase letters, digits, and single underscores." }
+    elsif line_exists
       # Not an outright rejection — this is also the path for adding the missing
       # northbound/southbound direction to a route that already has the other one.
       # #existing_line_append_error decides which case it actually is.
@@ -856,24 +816,21 @@ class GraphService
     errors
   end
 
-  # Deletes STOP<p> and joins its inbound and outbound edges into one edge. Stops after p
-  # and edges after edge2 shift down one slot, so `merged_from`/`merged_to` are post-shift ids.
-  def merge_around_stop!(prefix, line_id, p, edge1_id:, edge2_id:, shift_edges_through:, last_stop:,
-                         merged_id:, merged_from:, merged_to:)
-    edge1 = Edge.find_by(edge_id: edge1_id) # prev -> removed
-    edge2 = Edge.find_by(edge_id: edge2_id) # removed -> next
-    poly1 = edge1&.polyline_coordinates || []
-    poly2 = edge2&.polyline_coordinates || []
+  # Attributes of the edge that replaces `inbound` and `outbound` when the stop between them
+  # leaves the chain. Either edge may be nil; the other one supplies the attributes.
+  def merged_edge_attrs(inbound, outbound, line_id:, from_id:, to_id:)
+    poly1 = inbound&.polyline_coordinates || []
+    poly2 = outbound&.polyline_coordinates || []
     # Drop the first coordinate of the second half — it duplicates the shared
     # junction point at the station being removed (same invariant as stitching
     # polylines across merged legs elsewhere in the app).
     merged_poly = (poly1.empty? && poly2.empty?) ? [] : (poly1 + poly2.drop(1))
-    merged_dist = edge1&.distance_km.to_f + edge2&.distance_km.to_f
-    merged_time = edge1&.travel_time_minutes.to_f + edge2&.travel_time_minutes.to_f
+    merged_dist = inbound&.distance_km.to_f + outbound&.distance_km.to_f
+    merged_time = inbound&.travel_time_minutes.to_f + outbound&.travel_time_minutes.to_f
 
     # Both halves must allow reverse travel for the merged edge to; a nil half (one
     # side missing) can't vouch for anything, so it doesn't grant two-way either.
-    halves = [edge1, edge2].compact
+    halves = [inbound, outbound].compact
     merged_bidirectional = halves.any? && halves.all?(&:bidirectional)
     # Directions should already agree — both halves come from one chain — so a
     # mismatch means the chain is malformed. Drop the label rather than assert one.
@@ -881,64 +838,31 @@ class GraphService
     merged_direction = directions.length == 1 ? directions.first : nil
     if directions.length > 1
       Rails.logger.warn(
-        "[GraphService#remove_stop] #{prefix}: merging edges with different directions " \
+        "[GraphService#remove_stop] #{line_id}: merging edges with different directions " \
         "(#{directions.inspect}) — dropping the direction label."
       )
     end
 
-    Edge.where(edge_id: [edge1_id, edge2_id]).delete_all
-    Station.where(station_id: "#{prefix}_STOP#{p}").delete_all
-
-    (p + 1).upto(last_stop) { |i| rename_stop!("#{prefix}_STOP#{i}", "#{prefix}_STOP#{i - 1}") }
-    (p + 1).upto(shift_edges_through) do |i|
-      Edge.where(edge_id: "#{prefix}_SEG#{i}").update_all(edge_id: "#{prefix}_SEG#{i - 1}")
-    end
-
-    Edge.create!(
-      edge_id: merged_id, from_station: merged_from, to_station: merged_to,
-      mode: edge1&.mode || edge2&.mode, line: line_id,
+    {
+      edge_id: line_edge_id(from_id, to_id), from_station: from_id, to_station: to_id,
+      mode: inbound&.mode || outbound&.mode, line: line_id,
       travel_time_minutes: merged_time.positive? ? merged_time : travel_time_minutes(merged_dist),
       distance_km: merged_dist,
-      base_fare: edge1&.base_fare || edge2&.base_fare || 0,
-      fare_per_km: edge1&.fare_per_km || edge2&.fare_per_km || 0,
-      accepted_payments: edge1&.accepted_payments || edge2&.accepted_payments || [],
-      is_air_conditioned: edge1&.is_air_conditioned || edge2&.is_air_conditioned || false,
-      crowd_factor: edge1&.crowd_factor || edge2&.crowd_factor || 0.5,
-      reliability: edge1&.reliability || edge2&.reliability || 0.9,
-      # Same reasoning as edge_attrs: the merged edge inherits directionality instead
-      # of defaulting to two-way. Where the two halves disagree, the more restrictive
-      # answer wins — a one-way half means riders can't travel that stretch in reverse,
-      # and merging must not invent the ability.
+      base_fare: inbound&.base_fare || outbound&.base_fare || 0,
+      fare_per_km: inbound&.fare_per_km || outbound&.fare_per_km || 0,
+      accepted_payments: inbound&.accepted_payments || outbound&.accepted_payments || [],
+      is_air_conditioned: inbound&.is_air_conditioned || outbound&.is_air_conditioned || false,
+      crowd_factor: inbound&.crowd_factor || outbound&.crowd_factor || 0.5,
+      reliability: inbound&.reliability || outbound&.reliability || 0.9,
+      # The merged edge inherits directionality. Where the halves disagree, the more
+      # restrictive answer wins: merging must not invent the ability to ride in reverse.
       bidirectional: merged_bidirectional, direction: merged_direction,
       polyline_coordinates: merged_poly,
       # Only trustworthy if BOTH source edges were — one straight/unsnapped
       # half would make the whole merged shape suspect.
-      is_road_snapped: (edge1&.is_road_snapped || false) && (edge2&.is_road_snapped || false),
-      mk_directions_transport_type: edge1&.mk_directions_transport_type || edge2&.mk_directions_transport_type || mk_type_for(edge1&.mode)
-    )
-  end
-
-  # On a loop every stop has an inbound and an outbound edge, SEG<n> being the closing edge
-  # STOP<n> -> STOP1. Removing STOP1 or STOP<n> merges into the new closing edge SEG<n-1>.
-  def remove_loop_stop!(prefix, line_id, p, n)
-    wraps = p == 1 || p == n
-    merge_around_stop!(prefix, line_id, p,
-                       edge1_id: "#{prefix}_SEG#{p == 1 ? n : p - 1}", edge2_id: "#{prefix}_SEG#{p}",
-                       shift_edges_through: n, last_stop: n,
-                       merged_id: "#{prefix}_SEG#{wraps ? n - 1 : p - 1}",
-                       merged_from: "#{prefix}_STOP#{wraps ? n - 1 : p - 1}",
-                       merged_to: "#{prefix}_STOP#{wraps ? 1 : p}")
-  end
-
-  # Renames one stop id everywhere it's a foreign key: the station itself, both
-  # ends of any edge, and any surveyed access point. Every table that references
-  # a "<prefix>_STOP<n>" id must be renamed here — see the ownership note above
-  # insert_stop for which tables that is and isn't.
-  def rename_stop!(old_id, new_id)
-    Station.where(station_id: old_id).update_all(station_id: new_id)
-    Edge.where(from_station: old_id).update_all(from_station: new_id)
-    Edge.where(to_station: old_id).update_all(to_station: new_id)
-    StationAccessPoint.where(station_id: old_id).update_all(station_id: new_id)
+      is_road_snapped: (inbound&.is_road_snapped || false) && (outbound&.is_road_snapped || false),
+      mk_directions_transport_type: inbound&.mk_directions_transport_type || outbound&.mk_directions_transport_type || mk_type_for(inbound&.mode)
+    }
   end
 
   # Decides whether add_route may write into an *existing* line_id — the only
@@ -972,27 +896,45 @@ class GraphService
     nil # Genuinely new direction(s) for an existing, direction-using, non-train line — allow it.
   end
 
-  # The shared prefix of an auto-generated "<prefix>_STOP<n>" station id, or nil
-  # for a hand-authored id (e.g. a named MRT-3 station) that doesn't follow it.
-  def sequence_prefix(station_id)
-    station_id[/\A(.+)_STOP\d+\z/, 1]
+  # The chain of a generated stop id: the part before `_STOP<n>` or `_S<n>`. Returns nil for a
+  # hand-authored id such as a named MRT-3 station.
+  def chain_prefix(station_id)
+    station_id[STOP_ID_RE, 1]
   end
 
-  # All stations for `prefix` on `line_id`, ordered by their STOP<n> suffix —
-  # simpler and more robust than walking the edge chain (which a closed loop's
-  # wrap-around edge would otherwise confuse).
+  # Postgres pattern that matches every generated stop id of `prefix`.
+  def chain_pattern(prefix)
+    "^#{Regexp.escape(prefix)}_(STOP|S)[0-9]+$"
+  end
+
+  # The stations of one chain in travel order. A nil sequence sorts last, then the number in
+  # the id breaks the tie.
   def ordered_chain(line_id, prefix)
-    Station.where(line: line_id)
-           .where("station_id ~ ?", "^#{Regexp.escape(prefix)}_STOP[0-9]+$")
-           .to_a
-           .sort_by { |s| s.station_id[/_STOP(\d+)\z/, 1].to_i }
+    Station.where(line: line_id).where("station_id ~ ?", chain_pattern(prefix)).to_a
+           .sort_by { |s| [s.sequence ? 0 : 1, s.sequence.to_i, s.station_id[STOP_ID_RE, 2].to_i] }
   end
 
-  # Count of SEG-convention edges in this scope — used to detect a closed loop
-  # (n stations should have exactly n-1 chain edges in an open path; n or more
-  # means a wrap-around closing edge exists).
-  def scoped_seg_count(line_id, prefix)
-    Edge.where(line: line_id).where("edge_id ~ ?", "^#{Regexp.escape(prefix)}_SEG[0-9]+$").count
+  # The edge on the line that runs from `from` to `to`, or nil.
+  def find_chain_edge(line_id, from, to)
+    return unless from && to
+
+    Edge.find_by(line: line_id, from_station: from.station_id, to_station: to.station_id)
+  end
+
+  # A chain is a closed loop when an edge runs from its last stop to its first.
+  def closed_loop?(line_id, ordered)
+    ordered.length > 1 && find_chain_edge(line_id, ordered.last, ordered.first).present?
+  end
+
+  # Locks the line row until the transaction ends, so two writers never take the same stop
+  # number. A line with no row gets one.
+  def lock_line!(line_id, display_name:, mode:)
+    Line.lock.find_by(id: line_id) ||
+      Line.create!(id: line_id, display_name: display_name, mode: mode, last_stop_number: 0)
+  end
+
+  def line_edge_id(from_id, to_id)
+    "#{from_id}__#{to_id}"
   end
 
   def coords_of(station_id)
@@ -1096,8 +1038,7 @@ class GraphService
     }
   end
 
-  # Recomputes is_terminal for every station in this scope after an insert/remove
-  # shifts what the first/last stop is.
+  # Sets is_terminal on the first and last stop of the chain, in `sequence` order.
   def recompute_terminals!(line_id, prefix)
     ordered = ordered_chain(line_id, prefix)
     ordered.each_with_index do |s, i|
@@ -1125,7 +1066,7 @@ class GraphService
   end
 
   def line_json(l)
-    { id: l.id, displayName: l.display_name, mode: l.mode }
+    { id: l.id, displayName: l.display_name, mode: l.mode, lastStopNumber: l.last_stop_number }
   end
 
   # camelCase twin of Station#as_api_json — change the two together. A field present in
@@ -1145,6 +1086,7 @@ class GraphService
              amenities: s.amenities,
              operatingHours: { open: s.open_time, close: s.close_time } }
 
+    json[:sequence] = s.sequence if s.sequence
     points = s.access_points
     json[:accessPoints] = points.map(&:as_graph_json) if points.any?
     json

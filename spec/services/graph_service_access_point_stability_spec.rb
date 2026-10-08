@@ -1,11 +1,8 @@
 require "rails_helper"
 
-# station_access_points.station_id carries a DB-level FK to stations.station_id
-# (ON DELETE CASCADE, no ON UPDATE CASCADE). insert_stop/remove_stop renumber
-# stations by rewriting their primary key in place, so any renumbered station
-# with a surveyed access point must have its access points renamed in the same
-# transaction, or the renumbering UPDATE trips the FK constraint.
-RSpec.describe "GraphService renumbering carries station_access_points along" do
+# station_access_points.station_id has a foreign key to stations.station_id. An insert or a
+# remove never renames a station, so a surveyed access point stays attached to its stop.
+RSpec.describe "GraphService stop editing keeps station_access_points attached" do
   before do
     TransportMode.find_or_create_by!(id: "jeepney") do |m|
       m.display_name = "Jeepney"
@@ -20,7 +17,7 @@ RSpec.describe "GraphService renumbering carries station_access_points along" do
 
   after { GraphService.delete_route("KANAN") }
 
-  it "renames the access point's station_id instead of violating the FK" do
+  it "leaves the access point on the same station id after an insert and a remove" do
     result = GraphService.add_route({
       "displayName" => "Test", "lineID" => "KANAN", "mode" => "jeepney",
       "openTime" => "05:00", "closeTime" => "22:00",
@@ -31,19 +28,19 @@ RSpec.describe "GraphService renumbering carries station_access_points along" do
     raise "fixture failed: #{result.errors.inspect}" unless result.success?
 
     StationAccessPoint.create!(
-      access_point_id: "KANAN_STOP3_AP1", station_id: "KANAN_STOP3",
+      access_point_id: "KANAN_S3_AP1", station_id: "KANAN_S3",
       name: "Gate 1", kind: "both", lat: 14.23, lng: 121.0
     )
 
     insert_result = GraphService.insert_stop(
-      "referenceStationId" => "KANAN_STOP2", "position" => "after",
+      "referenceStationId" => "KANAN_S2", "position" => "after",
       "name" => "New", "lat" => 14.235, "lng" => 121.0
     )
     expect(insert_result.success?).to be true
-    expect(StationAccessPoint.find_by(access_point_id: "KANAN_STOP3_AP1").station_id).to eq("KANAN_STOP4")
+    expect(StationAccessPoint.find_by(access_point_id: "KANAN_S3_AP1").station_id).to eq("KANAN_S3")
 
-    remove_result = GraphService.remove_stop("KANAN_STOP2")
+    remove_result = GraphService.remove_stop("KANAN_S2")
     expect(remove_result.success?).to be true
-    expect(StationAccessPoint.find_by(access_point_id: "KANAN_STOP3_AP1").station_id).to eq("KANAN_STOP3")
+    expect(StationAccessPoint.find_by(access_point_id: "KANAN_S3_AP1").station_id).to eq("KANAN_S3")
   end
 end

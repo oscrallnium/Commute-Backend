@@ -1,13 +1,8 @@
 require "rails_helper"
 
-# A head/tail stop insert has no existing segment to slice, and used to be written with an
-# empty polyline "for Explore to road-snap later". Explore only ever snapped into its own
-# in-memory cache and never wrote back, so those edges stayed empty forever — appending
-# CEAT to UPLB_KANAN produced UPLB_KANAN_SEG8 with 0 waypoints, and the route drew nothing
-# between Animal Science and the new stop.
-#
-# The client now fetches the road route while previewing and posts it as `newEdgePolylines`
-# (one entry per new edge, in creation order).
+# A head or tail stop insert has no existing segment to slice. The client fetches the road route
+# while previewing and posts it as `newEdgePolylines` (one entry per new edge, in creation
+# order). Without it the new edge stays empty.
 RSpec.describe "GraphService#insert_stop polyline handling" do
   before do
     TransportMode.find_or_create_by!(id: "jeepney") do |m|
@@ -49,67 +44,67 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
 
     it "stores the supplied road geometry instead of an empty polyline" do
       result = GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP4", "position" => "after",
+        "referenceStationId" => "POLY_S4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
         "newEdgePolylines" => [road]
       )
       expect(result.success?).to be true
 
-      seg = edge("POLY_SEG4")
-      expect(seg.from_station).to eq "POLY_STOP4"
-      expect(seg.to_station).to eq "POLY_STOP5"
+      seg = edge("POLY_S4__POLY_S5")
+      expect(seg.from_station).to eq "POLY_S4"
+      expect(seg.to_station).to eq "POLY_S5"
       expect(points(seg).length).to eq 3
       expect(seg.is_road_snapped).to be true
     end
 
     it "pins the polyline's ends to the two stations so the line meets both pins" do
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP4", "position" => "after",
+        "referenceStationId" => "POLY_S4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
         "newEdgePolylines" => [road]
       )
-      pts = points(edge("POLY_SEG4"))
-      expect(pts.first).to eq [14.24, 121.0]     # POLY_STOP4, not the road's 14.2401
+      pts = points(edge("POLY_S4__POLY_S5"))
+      expect(pts.first).to eq [14.24, 121.0]     # POLY_S4, not the road's 14.2401
       expect(pts.last).to  eq [new_lat, 121.0]   # the new stop, not the road's 14.2499
     end
 
     it "measures distance along the road rather than as the crow flies" do
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP4", "position" => "after",
+        "referenceStationId" => "POLY_S4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
         "newEdgePolylines" => [road]
       )
       crow_flies = 1.11 # ~0.01 degrees of latitude
-      expect(edge("POLY_SEG4").distance_km).to be > crow_flies
+      expect(edge("POLY_S4__POLY_S5").distance_km).to be > crow_flies
     end
 
     it "still writes an empty polyline when the client couldn't supply one" do
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP4", "position" => "after",
+        "referenceStationId" => "POLY_S4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0
       )
-      seg = edge("POLY_SEG4")
+      seg = edge("POLY_S4__POLY_S5")
       expect(points(seg)).to be_empty
       expect(seg.is_road_snapped).to be false
     end
 
     it "rejects a two-point 'polyline' — that is the straight chord, not a road route" do
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP4", "position" => "after",
+        "referenceStationId" => "POLY_S4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
         "newEdgePolylines" => [[{ "lat" => 14.24, "lng" => 121.0 }, { "lat" => new_lat, "lng" => 121.0 }]]
       )
-      expect(points(edge("POLY_SEG4"))).to be_empty
-      expect(edge("POLY_SEG4").is_road_snapped).to be false
+      expect(points(edge("POLY_S4__POLY_S5"))).to be_empty
+      expect(edge("POLY_S4__POLY_S5").is_road_snapped).to be false
     end
 
     it "ignores malformed coordinates rather than storing them" do
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP4", "position" => "after",
+        "referenceStationId" => "POLY_S4", "position" => "after",
         "name" => "CEAT", "lat" => new_lat, "lng" => 121.0,
         "newEdgePolylines" => [[{ "lat" => 999, "lng" => 121.0 }, { "lat" => nil, "lng" => 121.0 }]]
       )
-      expect(points(edge("POLY_SEG4"))).to be_empty
+      expect(points(edge("POLY_S4__POLY_S5"))).to be_empty
     end
   end
 
@@ -119,12 +114,12 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
               { "lat" => 14.2075, "lng" => 121.0020 },
               { "lat" => 14.2099, "lng" => 121.0 }]
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP1", "position" => "before",
+        "referenceStationId" => "POLY_S1", "position" => "before",
         "name" => "New Head", "lat" => 14.205, "lng" => 121.0,
         "newEdgePolylines" => [road]
       )
-      seg = edge("POLY_SEG1")
-      expect([seg.from_station, seg.to_station]).to eq %w[POLY_STOP1 POLY_STOP2]
+      seg = edge("POLY_S5__POLY_S1")
+      expect([seg.from_station, seg.to_station]).to eq %w[POLY_S5 POLY_S1]
       expect(points(seg).first).to eq [14.205, 121.0]  # the new head stop
       expect(points(seg).last).to  eq [14.21, 121.0]   # the old first stop
       expect(seg.is_road_snapped).to be true
@@ -132,50 +127,49 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
   end
 
   describe "splitting a segment that has no polyline of its own" do
-    # The state a pre-fix head/tail insert left behind (UPLB_KANAN_SEG8). There is nothing
-    # to slice, so both halves need their own fetched road route or the empty edge simply
-    # becomes two empty edges.
+    # There is nothing to slice, so both halves need their own fetched road route or the
+    # empty edge becomes two empty edges.
     it "takes both halves from the client's fetched routes" do
-      edge("POLY_SEG1").update!(polyline_coordinates: [])
+      edge("POLY_S1__POLY_S2").update!(polyline_coordinates: [])
       first  = [{ "lat" => 14.2100, "lng" => 121.0 }, { "lat" => 14.2120, "lng" => 121.0015 }, { "lat" => 14.2149, "lng" => 121.0 }]
       second = [{ "lat" => 14.2151, "lng" => 121.0 }, { "lat" => 14.2170, "lng" => 121.0015 }, { "lat" => 14.2199, "lng" => 121.0 }]
 
       result = GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP1", "position" => "after",
+        "referenceStationId" => "POLY_S1", "position" => "after",
         "name" => "Mid", "lat" => 14.215, "lng" => 121.0,
         "newEdgePolylines" => [first, second]
       )
       expect(result.success?).to be true
 
-      expect(points(edge("POLY_SEG1")).length).to eq 3
-      expect(points(edge("POLY_SEG2")).length).to eq 3
-      expect(edge("POLY_SEG1").is_road_snapped).to be true
+      expect(points(edge("POLY_S1__POLY_S5")).length).to eq 3
+      expect(points(edge("POLY_S5__POLY_S2")).length).to eq 3
+      expect(edge("POLY_S1__POLY_S5").is_road_snapped).to be true
       # Ends pinned to the three stops involved.
-      expect(points(edge("POLY_SEG1")).first).to eq [14.21, 121.0]
-      expect(points(edge("POLY_SEG1")).last).to  eq [14.215, 121.0]
-      expect(points(edge("POLY_SEG2")).first).to eq [14.215, 121.0]
-      expect(points(edge("POLY_SEG2")).last).to  eq [14.22, 121.0]
+      expect(points(edge("POLY_S1__POLY_S5")).first).to eq [14.21, 121.0]
+      expect(points(edge("POLY_S1__POLY_S5")).last).to  eq [14.215, 121.0]
+      expect(points(edge("POLY_S5__POLY_S2")).first).to eq [14.215, 121.0]
+      expect(points(edge("POLY_S5__POLY_S2")).last).to  eq [14.22, 121.0]
     end
 
     it "still writes two empty halves when no routes could be fetched" do
-      edge("POLY_SEG1").update!(polyline_coordinates: [])
+      edge("POLY_S1__POLY_S2").update!(polyline_coordinates: [])
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP1", "position" => "after",
+        "referenceStationId" => "POLY_S1", "position" => "after",
         "name" => "Mid", "lat" => 14.215, "lng" => 121.0
       )
-      expect(points(edge("POLY_SEG1"))).to be_empty
-      expect(points(edge("POLY_SEG2"))).to be_empty
+      expect(points(edge("POLY_S1__POLY_S5"))).to be_empty
+      expect(points(edge("POLY_S5__POLY_S2"))).to be_empty
     end
 
     it "ignores a real recorded polyline's slice in favour of nothing fetched" do
       # Sanity check the guard is on emptiness, not on the payload: a segment WITH geometry
       # must keep being sliced even when the client also sent routes.
-      edge("POLY_SEG1").update!(polyline_coordinates: [
+      edge("POLY_S1__POLY_S2").update!(polyline_coordinates: [
         { lat: 14.21, lng: 121.0 }, { lat: 14.213, lng: 121.004 },
         { lat: 14.217, lng: 121.004 }, { lat: 14.22, lng: 121.0 }
       ])
       GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP1", "position" => "after",
+        "referenceStationId" => "POLY_S1", "position" => "after",
         "name" => "Mid", "lat" => 14.215, "lng" => 121.0,
         "newEdgePolylines" => [
           [{ "lat" => 14.21, "lng" => 121.9 }, { "lat" => 14.212, "lng" => 121.9 }, { "lat" => 14.215, "lng" => 121.9 }],
@@ -183,7 +177,7 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
         ]
       )
       # 121.9 would only appear if the fetched routes had been used.
-      expect(points(edge("POLY_SEG1")).map(&:last)).to all(be < 121.1)
+      expect(points(edge("POLY_S1__POLY_S5")).map(&:last)).to all(be < 121.1)
     end
   end
 
@@ -191,18 +185,18 @@ RSpec.describe "GraphService#insert_stop polyline handling" do
     # Slicing at index 0 gives the first half a single point, which is no polyline at all —
     # the same "0 waypoints" symptom, reached from the other direction.
     it "leaves both halves with a drawable line" do
-      edge("POLY_SEG1").update!(polyline_coordinates: [
+      edge("POLY_S1__POLY_S2").update!(polyline_coordinates: [
         { lat: 14.21, lng: 121.0 }, { lat: 14.213, lng: 121.001 },
         { lat: 14.217, lng: 121.001 }, { lat: 14.22, lng: 121.0 }
       ])
 
       result = GraphService.insert_stop(
-        "referenceStationId" => "POLY_STOP1", "position" => "after",
+        "referenceStationId" => "POLY_S1", "position" => "after",
         "name" => "Right At The Start", "lat" => 14.2100, "lng" => 121.0
       )
       expect(result.success?).to be true
-      expect(points(edge("POLY_SEG1")).length).to be >= 2
-      expect(points(edge("POLY_SEG2")).length).to be >= 2
+      expect(points(edge("POLY_S1__POLY_S5")).length).to be >= 2
+      expect(points(edge("POLY_S5__POLY_S2")).length).to be >= 2
     end
   end
 end

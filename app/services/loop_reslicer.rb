@@ -1,5 +1,5 @@
-# Rebuilds a closed loop whose road geometry sits on one edge. The task renumbers the stops
-# to `order`, cuts the source edge's polyline at each stop, and writes one edge per pair.
+# Rebuilds a closed loop whose road geometry sits on one edge. The task sets `sequence` to
+# `order`, cuts the source edge's polyline at each stop, and writes one edge per pair.
 # See lib/tasks/graph_repair.rake for how to run it.
 class LoopReslicer
   Plan = Struct.new(:order, :vertex_indices, :edges, keyword_init: true)
@@ -41,20 +41,20 @@ class LoopReslicer
   def apply!(plan)
     line_id = @source.line
     template = @source.dup
-    n = plan.order.length
 
     ActiveRecord::Base.transaction do
-      Edge.where(line: line_id).where("edge_id ~ ?", "^#{Regexp.escape(@prefix)}_SEG[0-9]+$").delete_all
-      # Two passes through temporary ids, so no rename lands on an id still in use.
-      plan.order.each_with_index { |s, i| @service.send(:rename_stop!, s.station_id, "#{@prefix}_TMP#{i + 1}") }
-      n.times { |i| @service.send(:rename_stop!, "#{@prefix}_TMP#{i + 1}", stop_id(i)) }
+      ids = plan.order.map(&:station_id)
+      Edge.where(line: line_id, from_station: ids, to_station: ids).delete_all
+      plan.order.each_with_index { |s, i| s.update!(sequence: i + 1) }
 
-      plan.edges.each_with_index do |e, i|
+      plan.edges.each do |e|
         points = e[:points].map { |lat, lng| { lat: lat, lng: lng } }
         dist = @service.send(:poly_length_km, points)
+        from_id = ids[e[:from_index]]
+        to_id = ids[e[:to_index]]
         Edge.create!(@service.send(:edge_attrs, template,
-                                   edge_id: "#{@prefix}_SEG#{i + 1}",
-                                   from: stop_id(e[:from_index]), to: stop_id(e[:to_index]),
+                                   edge_id: @service.send(:line_edge_id, from_id, to_id),
+                                   from: from_id, to: to_id,
                                    distance_km: dist, polyline: points,
                                    is_road_snapped: e[:is_road_snapped]))
       end
@@ -66,13 +66,10 @@ class LoopReslicer
 
   private
 
-  def stop_id(index) = "#{@prefix}_STOP#{index + 1}"
-
   def coords(station) = [station.lat.to_f, station.lng.to_f]
 
   def validate!(stations)
-    current = Station.where(line: @source.line)
-                     .where("station_id ~ ?", "^#{Regexp.escape(@prefix)}_STOP[0-9]+$").pluck(:station_id)
+    current = @service.send(:ordered_chain, @source.line, @prefix).map(&:station_id)
     raise ArgumentError, "order must list every stop of #{@prefix} once" unless current.sort == @order.sort
     raise ArgumentError, "source edge must start at a stop in order" unless @order.include?(@source.from_station)
     raise ArgumentError, "source edge must end at the stop before its start in order" unless

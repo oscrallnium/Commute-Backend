@@ -17,7 +17,7 @@ class Station < ApplicationRecord
   }
 
   def as_api_json
-    {
+    json = {
       id: station_id,
       name: name,
       short_name: short_name,
@@ -35,5 +35,7 @@ class Station < ApplicationRecord
       # access points repeat that.
       access_points: access_points.map(&:as_api_json)
     }
+    json[:sequence] = sequence if sequence
+    json
   end
 end

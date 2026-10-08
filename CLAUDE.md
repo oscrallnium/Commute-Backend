@@ -150,11 +150,11 @@ DELETE /api/v1/auth/account          # App Store compliance
 
 ---
 
-## Shared tables with Hono microservice
+## Graph tables
 
-`stations` and `edges` tables are **owned and seeded by the Hono microservice** (`npm run db:migrate && npm run db:seed`). Rails reads them via the `Station` and `Edge` models using TEXT primary keys (`station_id`, `edge_id`).
-
-**Do not run Rails migrations that create or alter these tables.** If the schema changes, update the Hono migration first, then update the Rails models to match.
+Rails owns the `stations` and `edges` tables. `GraphService` writes them, and Rails migrations
+change their schema (for example `020_defer_station_access_points_fk.rb`). Both use TEXT
+primary keys (`station_id`, `edge_id`); see "Graph ID convention" below.
 
 ---
 
@@ -166,6 +166,38 @@ DELETE /api/v1/auth/account          # App Store compliance
 - **150 MB upload cap** — enforced before Active Storage processing in `ArWorldMapsController`.
 - **100-entry ring buffer** — relocalization events on `ar_world_maps.metadata` capped at 100.
 - **Analytics never block** — `AnalyticsController#route_plan` rescues all errors and returns 201 regardless, so iOS commutes are never blocked by a logging failure.
+
+---
+
+## Graph ID convention
+
+An ID identifies a record and never changes. Names live in `name` or `display_name`. Meaning
+lives in columns: `mode`, `direction`, and `stations.sequence` for stop order. Never encode
+order, direction, or mode in an ID so that code can read them back.
+
+Every new ID follows this standard. Existing IDs that do not match stay valid until a rename
+migration replaces them. Code must accept both forms until then.
+
+| Key | Format | Example |
+|---|---|---|
+| Characters (all graph IDs) | `^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$` — uppercase, digits, single underscores. No hyphen, no dot. | |
+| Line | A short service code. No mode word. | `MRT3`, `EDSA_CAROUSEL`, `AYALA_ALABANG` |
+| Stop chain | `<LINE>` for one chain, `<LINE>_<DIR>` per direction. `<DIR>` is `NB`, `SB`, `EB`, `WB`, `IN`, or `OUT`. | `AYALA_ALABANG_SB` |
+| Named station | `<LINE>_<NAME>` | `MRT3_TAFT_AVE` |
+| Generated stop | `<CHAIN>_S<n>`. `n` comes from the per-line counter `lines.last_stop_number`, so it is never reused or renumbered. Order comes from `sequence`. | `AYALA_ALABANG_NB_S4` |
+| Line edge | `<FROM_STATION>__<TO_STATION>` in the direction of travel. A double underscore separates the stations. | `AYALA_ALABANG_NB_S1__AYALA_ALABANG_NB_S2` |
+| Transfer edge | `X__<FROM_STATION>__<TO_STATION>` | `X__LRT1_EDSA__MRT_TAFT_AVE` |
+| Mode, payment method | Lowercase snake case | `bus`, `beep_card` |
+
+Rules:
+
+- Validate an ID in one place, `GraphService`, before any write. Reject a new ID that does not
+  match its format.
+- Read a stop's chain or order from columns, not from its ID. Legacy `_STOP<n>` and `_SEG<n>`
+  IDs exist; treat their numbers as names, not as positions.
+- Inserting or removing a stop changes `sequence` values only. It never renames a station or
+  an edge. Tables such as `saved_routes`, `incidents`, and `ar_world_maps` store station IDs
+  with no foreign key, so a rename silently points them at a different stop.
 
 ---
 
@@ -265,6 +297,36 @@ one-line comment.
 Apply these principles at the level the code already uses: controllers, service objects such as
 `GraphService`, and models. Do not add a layer of indirection where one concrete class already
 serves every caller.
+
+---
+
+## Agent orchestration
+
+Opus 5.5 (`claude-opus-5-5`) is the orchestrator. Sonnet 5.5 (`claude-sonnet-5-5`) and Haiku 5.5 (`claude-haiku-5-5`) are the implementors. This is the default for every task in this project.
+
+- **Opus 5.5 does**: read the request, research the codebase, ask the user questions, write the plan, split the work, and review the result.
+- **Sonnet 5.5 does**: code edits that need judgement. Start each one with the `Agent` tool and `model: "sonnet"`.
+- **Haiku 5.5 does**: code edits that the brief fully defines. Start each one with the `Agent` tool and `model: "haiku"`.
+- **Opus 5.5 edits directly only**: documentation (`CLAUDE.md`, `docs/`, memory) and a fix of a few lines after review.
+
+| Task | Implementor |
+|---|---|
+| Controller actions, strong params, auth and `require_admin!` checks | Sonnet 5.5 |
+| Services, the Hono proxy, Sidekiq jobs, Rack::Attack rules | Sonnet 5.5 |
+| Models, validations, associations, migrations, tables shared with Hono | Sonnet 5.5 |
+| Request specs and model specs | Sonnet 5.5 |
+| Bug fixes that need a root cause | Sonnet 5.5 |
+| `config/routes.rb` lines for an endpoint that Sonnet 5.5 implements | Haiku 5.5 |
+| One constant, one ENV key in `.env.example`, one serializer field from a given column | Haiku 5.5 |
+| Copy and error message strings, renames, comment fixes | Haiku 5.5 |
+
+- **Brief each agent fully.** An agent does not see the conversation. Give it the file paths, the exact behavior, the user's answers, and the `CLAUDE.md` rules that apply.
+- **Haiku brief**: name the file, the line or symbol, and the exact new code or text. If the brief must ask the agent to decide or choose, give the task to Sonnet 5.5.
+- **Split API work by layer.** Haiku 5.5 adds the route lines. Sonnet 5.5 writes the controller, the service, and the spec.
+- **Split by file.** Run independent agents in parallel. Do not give two agents the same file.
+- **Review every result.** Opus 5.5 reads the diff against the plan and this file before it reports to the user. Send fixes back to the same agent with `SendMessage`.
+- **Escalate once.** If a Haiku result fails review, give the task to a new Sonnet 5.5 agent. Do not retry it with Haiku.
+- **No migrations run by agents.** An agent does not run `rails db:migrate` or deploy unless the user asks.
 
 ---
 

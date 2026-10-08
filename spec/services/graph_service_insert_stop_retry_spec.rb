@@ -23,13 +23,13 @@ RSpec.describe "GraphService#insert_stop retry" do
   after { GraphService.delete_route("RETRY") }
 
   let(:payload) do
-    { "referenceStationId" => "RETRY_STOP2", "position" => "after",
+    { "referenceStationId" => "RETRY_S2", "position" => "after",
       "name" => "New", "lat" => 14.235, "lng" => 121.0 }
   end
 
   it "returns the stop that the first request added instead of adding a second one" do
     first = GraphService.insert_stop(payload)
-    second = GraphService.insert_stop(payload.merge("referenceStationId" => "RETRY_STOP2"))
+    second = GraphService.insert_stop(payload.merge("referenceStationId" => "RETRY_S2"))
 
     expect(first.success?).to be true
     expect(second.success?).to be true

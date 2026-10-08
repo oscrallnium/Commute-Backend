@@ -1,10 +1,8 @@
 require "rails_helper"
 
-# Inserting or removing a stop used to rebuild the affected edges with a hardcoded
-# `bidirectional: true, direction: nil`, so editing a one-way route silently made part of
-# it two-way — and on a directional chain dropped the direction label. The client
-# synthesises a reverse edge for anything bidirectional, so that stretch could then be
-# routed backwards, sending a rider to a stop that only serves the other direction.
+# Inserting or removing a stop keeps the directionality of the edges it rebuilds. The client
+# synthesises a reverse edge for anything bidirectional, so a one-way route must stay one-way
+# and a directional chain must keep its direction label.
 RSpec.describe "GraphService stop editing preserves directionality" do
   before do
     TransportMode.find_or_create_by!(id: "jeepney") do |m|
@@ -29,8 +27,8 @@ RSpec.describe "GraphService stop editing preserves directionality" do
     raise "fixture failed: #{result.errors.inspect}" unless result.success?
   end
 
-  def edges_for(prefix)
-    Edge.where("edge_id LIKE ?", "#{prefix}\\_SEG%").order(:edge_id)
+  def edges_for(line_id)
+    Edge.where(line: line_id)
   end
 
   after { %w[ONEWAY DIRECTIONAL TWOWAY].each { |l| GraphService.delete_route(l) } }
@@ -40,7 +38,7 @@ RSpec.describe "GraphService stop editing preserves directionality" do
 
     it "stays one-way after inserting a stop mid-chain" do
       result = GraphService.insert_stop(
-        "referenceStationId" => "ONEWAY_STOP2", "position" => "after",
+        "referenceStationId" => "ONEWAY_S2", "position" => "after",
         "name" => "New", "lat" => 14.235, "lng" => 121.0
       )
       expect(result.success?).to be true
@@ -49,7 +47,7 @@ RSpec.describe "GraphService stop editing preserves directionality" do
 
     it "stays one-way after inserting a stop at the head" do
       GraphService.insert_stop(
-        "referenceStationId" => "ONEWAY_STOP1", "position" => "before",
+        "referenceStationId" => "ONEWAY_S1", "position" => "before",
         "name" => "New Head", "lat" => 14.205, "lng" => 121.0
       )
       expect(edges_for("ONEWAY").map(&:bidirectional)).to all(be false)
@@ -57,14 +55,14 @@ RSpec.describe "GraphService stop editing preserves directionality" do
 
     it "stays one-way after inserting a stop at the tail" do
       GraphService.insert_stop(
-        "referenceStationId" => "ONEWAY_STOP4", "position" => "after",
+        "referenceStationId" => "ONEWAY_S4", "position" => "after",
         "name" => "New Tail", "lat" => 14.255, "lng" => 121.0
       )
       expect(edges_for("ONEWAY").map(&:bidirectional)).to all(be false)
     end
 
     it "stays one-way after removing a stop" do
-      expect(GraphService.remove_stop("ONEWAY_STOP2").success?).to be true
+      expect(GraphService.remove_stop("ONEWAY_S2").success?).to be true
       expect(edges_for("ONEWAY").map(&:bidirectional)).to all(be false)
     end
   end
@@ -74,19 +72,19 @@ RSpec.describe "GraphService stop editing preserves directionality" do
 
     it "keeps every edge one-way and northbound after an insert" do
       result = GraphService.insert_stop(
-        "referenceStationId" => "DIRECTIONAL_NB_STOP2", "position" => "after",
+        "referenceStationId" => "DIRECTIONAL_NB_S2", "position" => "after",
         "name" => "New", "lat" => 14.235, "lng" => 121.0
       )
       expect(result.success?).to be true
 
-      edges = edges_for("DIRECTIONAL_NB")
+      edges = edges_for("DIRECTIONAL")
       expect(edges.map(&:bidirectional)).to all(be false)
       expect(edges.map(&:direction)).to all(eq("northbound"))
     end
 
     it "keeps the direction after removing a stop" do
-      GraphService.remove_stop("DIRECTIONAL_NB_STOP2")
-      edges = edges_for("DIRECTIONAL_NB")
+      GraphService.remove_stop("DIRECTIONAL_NB_S2")
+      edges = edges_for("DIRECTIONAL")
       expect(edges.map(&:bidirectional)).to all(be false)
       expect(edges.map(&:direction)).to all(eq("northbound"))
     end
@@ -97,7 +95,7 @@ RSpec.describe "GraphService stop editing preserves directionality" do
 
     it "stays two-way after an insert — inheritance, not a blanket one-way rule" do
       GraphService.insert_stop(
-        "referenceStationId" => "TWOWAY_STOP2", "position" => "after",
+        "referenceStationId" => "TWOWAY_S2", "position" => "after",
         "name" => "New", "lat" => 14.235, "lng" => 121.0
       )
       expect(edges_for("TWOWAY").map(&:bidirectional)).to all(be true)

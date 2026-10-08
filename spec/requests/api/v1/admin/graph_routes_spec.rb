@@ -77,8 +77,9 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
     end
 
     it "keeps station ids unnamespaced and in travel order" do
-      ids = Station.where(line: "IOS_ONEWAY").map(&:station_id).sort_by { |i| i[/\d+\z/].to_i }
-      expect(ids).to eq((1..7).map { |n| "IOS_ONEWAY_STOP#{n}" })
+      ids = Station.where(line: "IOS_ONEWAY").order(:sequence).map(&:station_id)
+      expect(ids).to eq((1..7).map { |n| "IOS_ONEWAY_S#{n}" })
+      expect(Station.where(line: "IOS_ONEWAY").order(:sequence).map(&:sequence)).to eq((1..7).to_a)
     end
 
     it "keeps the chain open — n stops gives n-1 edges" do
@@ -86,8 +87,8 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
     end
 
     it "stores the outbound and return stops as distinct rows at distinct coordinates" do
-      outbound = Station.find_by(station_id: "IOS_ONEWAY_STOP2")
-      inbound  = Station.find_by(station_id: "IOS_ONEWAY_STOP6")
+      outbound = Station.find_by(station_id: "IOS_ONEWAY_S2")
+      inbound  = Station.find_by(station_id: "IOS_ONEWAY_S6")
       expect(outbound.name).to eq("Junction (outbound)")
       expect(inbound.name).to eq("Junction (inbound)")
       expect(inbound.lat).not_to eq(outbound.lat)
@@ -119,7 +120,8 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
       expect(response).to have_http_status(:created)
       edges = Edge.where(line: "IOS_DIR")
       expect(edges.map(&:bidirectional)).to all(be false)
-      expect(edges.first.edge_id).to start_with("IOS_DIR_NB_SEG")
+      expect(edges.first.edge_id).to start_with("IOS_DIR_NB_S")
+      expect(edges.first.edge_id).to include("__")
     end
 
     it "is rejected when also marked bidirectional, writing nothing" do

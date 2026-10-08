@@ -9,7 +9,7 @@ namespace :graph do
     plan.edges.each_with_index do |e, i|
       from = plan.order[e[:from_index]]
       to = plan.order[e[:to_index]]
-      puts format("%s_SEG%-3d %-22s -> %-22s %4d pts %s", prefix, i + 1, from.name, to.name,
+      puts format("%-3d %-22s -> %-22s %4d pts %s", i + 1, from.name, to.name,
                   e[:points].length, e[:is_road_snapped] ? "" : "(straight line, snap it in the edge editor)")
     end
 
