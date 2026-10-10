@@ -68,6 +68,8 @@ Rails.application.routes.draw do
                                   constraints: { id: GRAPH_ID }, format: false
         resources :edges,         only: %i[update],
                                   constraints: { id: GRAPH_ID }, format: false
+        resources :lines,         only: %i[update],
+                                  constraints: { id: GRAPH_ID }, format: false
         get    "analytics/summary",      to: "analytics#summary"
         get    "analytics/hotspots",     to: "analytics#hotspots"
         post   "graph/routes",           to: "graph#create_route"

@@ -268,7 +268,8 @@ class GraphService
 
       # Persists the display name for GET /api/v1/graph's `lines` section. A repeated lineID
       # (the "extend a route" flow) also corrects the name, and stores the stop counter.
-      line_record.update!(display_name: display_name, mode: mode, last_stop_number: last_stop_number)
+      line_record.update!(display_name: display_name, mode: mode, last_stop_number: last_stop_number,
+                          **color_attrs(payload))
 
       bump_graph_version!
     end
@@ -580,6 +581,7 @@ class GraphService
 
   def validate(payload)
     errors = []
+    errors << { field: "colorHex", message: "Color must look like #RRGGBB." } if invalid_color?(payload)
     passes = normalize_passes(payload)
 
     display_name = payload[:displayName] || payload["displayName"]
@@ -803,6 +805,20 @@ class GraphService
   def mk_type_for(mode)
     { "train" => "train", "bus" => "bus", "jeepney" => "automobile",
       "e_jeepney" => "automobile", "tricycle" => "automobile" }.fetch(mode, "transit")
+  end
+
+  def payload_color(payload)
+    (payload[:colorHex] || payload["colorHex"]).presence&.to_s&.strip&.upcase
+  end
+
+  def invalid_color?(payload)
+    color = payload_color(payload)
+    color.present? && color !~ Line::COLOR_HEX_FORMAT
+  end
+
+  # Empty when the payload omits colorHex, so extending a route keeps the stored color.
+  def color_attrs(payload)
+    payload.key?(:colorHex) || payload.key?("colorHex") ? { color_hex: payload_color(payload) } : {}
   end
 
   def direction_tag(direction)
@@ -1080,7 +1096,9 @@ class GraphService
   end
 
   def line_json(l)
-    { id: l.id, displayName: l.display_name, mode: l.mode, lastStopNumber: l.last_stop_number }
+    h = { id: l.id, displayName: l.display_name, mode: l.mode, lastStopNumber: l.last_stop_number }
+    h[:colorHex] = l.color_hex if l.color_hex.present?
+    h
   end
 
   # camelCase twin of Station#as_api_json — change the two together. A field present in
