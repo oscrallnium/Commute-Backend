@@ -9,8 +9,14 @@
 
 class GraphService
   EARTH_RADIUS_KM  = 6371.0
-  AVG_SPEED_KMH    = 24.0
   MIN_TRAVEL_TIME  = 2.0 # minutes
+  # Average speed in km/h per mode for an edge shorter than EXPRESS_GAP_KM.
+  SPEED_KMH_BY_MODE = { "bus" => 22.0, "jeepney" => 16.0, "tricycle" => 15.0, "train" => 30.0 }.freeze
+  DEFAULT_SPEED_KMH = 22.0
+  ROAD_MODES        = %w[bus jeepney tricycle].freeze
+  # A road edge at least EXPRESS_GAP_KM long runs on an expressway at EXPRESS_SPEED_KMH.
+  EXPRESS_GAP_KM    = 5.0
+  EXPRESS_SPEED_KMH = 45.0
   # A stop with the same name this close on the same chain is the same stop.
   DUPLICATE_STOP_RADIUS_M = 5.0
 
@@ -165,7 +171,7 @@ class GraphService
             poly_points = []
             dist_km = haversine(prev_lat, prev_lng, stop_lat, stop_lng)
           end
-          time_min = travel_time_minutes(dist_km)
+          time_min = travel_time_minutes(dist_km, mode)
 
           edges << {
             edge_id: edge_id,
@@ -226,7 +232,7 @@ class GraphService
           to_station: first_id,
           mode: mode,
           line: line_id,
-          travel_time_minutes: travel_time_minutes(closing_dist),
+          travel_time_minutes: travel_time_minutes(closing_dist, mode),
           distance_km: closing_dist,
           base_fare: payload[:baseFare].to_f,
           fare_per_km: payload[:farePerKm].to_f,
@@ -768,8 +774,14 @@ class GraphService
     EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   end
 
-  def travel_time_minutes(dist_km)
-    [MIN_TRAVEL_TIME, dist_km / (AVG_SPEED_KMH / 60.0)].max
+  def travel_time_minutes(dist_km, mode)
+    [MIN_TRAVEL_TIME, dist_km / (speed_kmh(dist_km, mode) / 60.0)].max
+  end
+
+  def speed_kmh(dist_km, mode)
+    return EXPRESS_SPEED_KMH if ROAD_MODES.include?(mode) && dist_km >= EXPRESS_GAP_KM
+
+    SPEED_KMH_BY_MODE.fetch(mode, DEFAULT_SPEED_KMH)
   end
 
   def polyline_distance_km(points)
@@ -843,10 +855,11 @@ class GraphService
       )
     end
 
+    merged_mode = inbound&.mode || outbound&.mode
     {
       edge_id: line_edge_id(from_id, to_id), from_station: from_id, to_station: to_id,
-      mode: inbound&.mode || outbound&.mode, line: line_id,
-      travel_time_minutes: merged_time.positive? ? merged_time : travel_time_minutes(merged_dist),
+      mode: merged_mode, line: line_id,
+      travel_time_minutes: merged_time.positive? ? merged_time : travel_time_minutes(merged_dist, merged_mode),
       distance_km: merged_dist,
       base_fare: inbound&.base_fare || outbound&.base_fare || 0,
       fare_per_km: inbound&.fare_per_km || outbound&.fare_per_km || 0,
@@ -1009,10 +1022,11 @@ class GraphService
   # from `template` (an existing edge on the same line) since that metadata
   # describes the line as a whole, not any one segment.
   def edge_attrs(template, edge_id:, from:, to:, distance_km:, polyline:, is_road_snapped:, mode: nil, line: nil)
+    edge_mode = mode || template&.mode
     {
       edge_id: edge_id, from_station: from, to_station: to,
-      mode: mode || template&.mode, line: line || template&.line,
-      travel_time_minutes: travel_time_minutes(distance_km),
+      mode: edge_mode, line: line || template&.line,
+      travel_time_minutes: travel_time_minutes(distance_km, edge_mode),
       distance_km: distance_km,
       base_fare: template&.base_fare || 0,
       fare_per_km: template&.fare_per_km || 0,
