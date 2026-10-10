@@ -198,6 +198,31 @@ Rules:
 - Inserting or removing a stop changes `sequence` values only. It never renames a station or
   an edge. Tables such as `saved_routes`, `incidents`, and `ar_world_maps` store station IDs
   with no foreign key, so a rename silently points them at a different stop.
+- `INTERCHANGE` is a reserved system line for transfer walks. Do not rename it. The iOS
+  engine reads it to skip fares and to stop leg merges.
+- Write a `display_name` in Title Case. Put an en dash (–) between the two end points:
+  `Ayala–Alabang`, `Guadalupe–LRT Buendia`.
+
+### Direction guide
+
+Pick the chain shape from how the service runs:
+
+| Service shape | Chain ID | `edges.bidirectional` | `edges.direction` |
+|---|---|---|---|
+| Rail that runs both ways on one track (LRT-1, LRT-2) | One chain, `<LINE>` | `true` | `null` |
+| Two one-way paths (MRT-3, most buses and jeepneys) | `<LINE>_<DIR>` for each path | `false` | Required |
+| Closed loop in one direction (Guadalupe–LRT Buendia) | One chain, `<LINE>`, with an edge from the last stop to the first | `false` | `null` |
+
+Pick `<DIR>` with these rules:
+
+1. Compare the first stop with the last stop. If the latitude change is larger than the
+   longitude change, use `NB` or `SB`. If not, use `EB` or `WB`.
+2. Use `IN` or `OUT` only when one end is a hub and a compass word confuses riders. `IN` goes
+   toward the hub.
+3. Store the full lowercase word in `edges.direction`: `northbound`, `southbound`, `eastbound`,
+   `westbound`, `inbound`, or `outbound`.
+4. Read a direction from `edges.direction` only. Never parse it from an ID.
+5. Show riders the headsign, not the direction code, when a headsign exists.
 
 ---
 
