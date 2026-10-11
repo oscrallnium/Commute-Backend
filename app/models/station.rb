@@ -10,7 +10,10 @@ class Station < ApplicationRecord
            class_name: "StationAccessPoint", primary_key: :station_id,
            foreign_key: :station_id, dependent: :destroy
 
+  BOARDING_VALUES = %w[both alight_only].freeze
+
   validates :station_id, :name, :line, :type, presence: true
+  validates :boarding, inclusion: { in: BOARDING_VALUES }
 
   scope :search, lambda { |q|
     where("name ILIKE :q OR short_name ILIKE :q OR line ILIKE :q", q: "%#{q}%")
@@ -26,6 +29,7 @@ class Station < ApplicationRecord
       coordinates: { lat: lat.to_f, lng: lng.to_f },
       is_terminal: is_terminal,
       is_interchange: is_interchange,
+      boarding: boarding,
       amenities: amenities,
       operating_hours: { open: open_time, close: close_time },
       # snake_case here, camelCase in GraphService#station_json. Both must carry this

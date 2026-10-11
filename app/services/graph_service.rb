@@ -1110,6 +1110,7 @@ class GraphService
   # `accessPoints` is omitted rather than sent empty when a station has no doors
   # surveyed, so the payload does not grow by 60 empty arrays for a feature that starts
   # out unpopulated. The iOS side decodes it as optional and falls back to `coordinates`.
+  # `boarding` follows the same rule: it is sent only when it is not "both".
   def station_json(s)
     json = { id: s.station_id, name: s.name, shortName: s.short_name,
              line: s.line, type: s.type,
@@ -1121,6 +1122,7 @@ class GraphService
     json[:sequence] = s.sequence if s.sequence
     points = s.access_points
     json[:accessPoints] = points.map(&:as_graph_json) if points.any?
+    json[:boarding] = s.boarding unless s.boarding == "both"
     json
   end
 

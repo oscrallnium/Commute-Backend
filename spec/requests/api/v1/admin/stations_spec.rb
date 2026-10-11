@@ -82,4 +82,32 @@ RSpec.describe "PATCH /api/v1/admin/stations/:id", type: :request do
       expect(response).to have_http_status(:forbidden)
     end
   end
+
+  context "boarding" do
+    it "stores alight_only and returns it" do
+      patch_station(station: { boarding: "alight_only" })
+      expect(response).to have_http_status(:ok)
+      expect(station.reload.boarding).to eq("alight_only")
+      expect(response.parsed_body.dig("data", "boarding")).to eq("alight_only")
+    end
+
+    it "returns 422 for an invalid value and keeps the stored value" do
+      patch_station(station: { boarding: "board_only" })
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(station.reload.boarding).to eq("both")
+    end
+
+    it "leaves boarding unchanged when the key is absent" do
+      station.update!(boarding: "alight_only")
+      patch_station(station: { name: "Renamed" })
+      expect(response).to have_http_status(:ok)
+      expect(station.reload.boarding).to eq("alight_only")
+    end
+
+    it "bumps the graph version" do
+      GraphMeta.first || GraphMeta.create!(version: 1, last_modified: Time.current)
+      expect { patch_station(station: { boarding: "alight_only" }) }
+        .to change { GraphMeta.first.version }.by(1)
+    end
+  end
 end

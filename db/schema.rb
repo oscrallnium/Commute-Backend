@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 25) do
+ActiveRecord::Schema[7.2].define(version: 26) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -196,6 +196,7 @@ ActiveRecord::Schema[7.2].define(version: 25) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.integer "sequence"
+    t.string "boarding", default: "both", null: false
     t.index ["line", "sequence"], name: "index_stations_on_line_and_sequence"
     t.index ["line"], name: "index_stations_on_line"
     t.index ["name"], name: "idx_stations_name_trgm", opclass: :gin_trgm_ops, using: :gin

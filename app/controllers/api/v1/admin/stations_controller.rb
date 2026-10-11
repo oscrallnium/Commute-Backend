@@ -42,6 +42,7 @@ module Api
           end
 
           if ok
+            GraphService.bump_version!
             bust_graph_cache!(extra_pattern: "stations*")
             render json: { data: @station.reload.as_api_json }, status: :ok
           else
@@ -108,7 +109,7 @@ module Api
         def station_params
           raw = params.require(:station).permit(
             :lat, :lng, :latitude, :longitude,
-            :name, :short_name, :open_time, :close_time
+            :name, :short_name, :open_time, :close_time, :boarding
           )
           result = {}
           if raw[:latitude].present? || raw[:lat].present?
@@ -119,6 +120,7 @@ module Api
           result[:short_name] = raw[:short_name].strip if raw[:short_name].present?
           result[:open_time]  = raw[:open_time].strip  if raw[:open_time].present?
           result[:close_time] = raw[:close_time].strip if raw[:close_time].present?
+          result[:boarding]   = raw[:boarding].to_s.strip if raw.key?(:boarding)
           result
         end
       end
