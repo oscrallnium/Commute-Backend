@@ -59,6 +59,11 @@ class GraphService
     new.assemble_graph
   end
 
+  # Every line, stop, and edge, with the ops fields. Used by GET /api/v1/admin/graph.
+  def self.assemble_admin_graph
+    new.assemble_admin_graph
+  end
+
   def self.graph_version
     new.graph_version
   end
@@ -528,39 +533,35 @@ class GraphService
 
   # ── assemble_graph ──────────────────────────────────────────────────────────
   # Builds the full JSON payload identical in shape to transit_graph_v3.json.
-  # Used by GET /api/v1/graph.
+  # Used by GET /api/v1/graph. GraphVisibility decides which rows riders see.
 
   def assemble_graph
-    meta     = GraphMeta.first!
-    modes    = TransportMode.order(:position)
-    payments = PaymentMethod.order(:id)
-    lines    = Line.order(:id)
-    peak     = PeakHourConfig.first
-    fares    = FareMatrix.all
-    # includes(:access_points): station_json reads them per station, and without the
-    # preload that is one query per station on a payload that already assembles the whole
-    # graph in a single request.
-    stations = Station.includes(:access_points).order(:line, :station_id)
-    edges    = Edge.order(:line, :edge_id)
+    source = load_graph_source
+    vis    = source[:visibility]
+    graph_payload(
+      source,
+      modes: source[:modes].to_h { |m| [m.id, mode_json(m).merge(lines: m.lines.select { |id| vis.line_id_visible?(id) })] },
+      lines: source[:lines].select { |l| vis.line_visible?(l) }.to_h { |l| [l.id, line_json(l)] },
+      stations: source[:stations].select { |s| vis.station_visible?(s) }.map { |s| station_json(s) },
+      edges: source[:edges].select { |e| vis.edge_visible?(e) }.map { |e| edge_json(e) },
+      fare_matrix: source[:fares].select { |f| vis.line_id_visible?(f.line_name) },
+      rail_fare_tables: source[:rail_fares].select { |t| vis.line_id_visible?(t.line_id) }
+                                           .to_h { |t| [t.line_id, visible_rail_fare_json(t, vis)] }
+    )
+  end
 
-    {
-      version: meta.version,
-      lastModified: meta.last_modified.iso8601,
-      enforceOperatingHours: meta.enforce_operating_hours,
-      metadata: {
-        region: meta.region,
-        currency: meta.currency,
-        schemaVersion: meta.schema_version,
-        polylineNote: "polylineCoordinates define the static display shape of each edge. Fixed — never changes with traffic."
-      },
-      transportModes: modes.to_h { |m| [m.id, mode_json(m)] },
-      paymentMethods: payments.to_h { |p| [p.id, payment_json(p)] },
-      lines: lines.to_h { |l| [l.id, line_json(l)] },
-      peakHourMultipliers: peak&.data || {},
-      fareMatrix: fares.to_h { |f| [f.line_name, f.data] },
-      stations: stations.map { |s| station_json(s) },
-      edges: edges.map { |e| edge_json(e) }
-    }
+  def assemble_admin_graph
+    source = load_graph_source
+    vis    = source[:visibility]
+    graph_payload(
+      source,
+      modes: source[:modes].to_h { |m| [m.id, mode_json(m)] },
+      lines: source[:lines].to_h { |l| [l.id, line_json(l).merge(admin_line_json(l, hidden: !vis.line_visible?(l)))] },
+      stations: source[:stations].map { |s| station_json(s).merge(ops_state_json(s, hidden: !vis.station_visible?(s))) },
+      edges: source[:edges].map { |e| edge_json(e).merge(ops_state_json(e, hidden: !vis.edge_visible?(e))) },
+      fare_matrix: source[:fares],
+      rail_fare_tables: source[:rail_fares].to_h { |t| [t.line_id, t.as_graph_json] }
+    )
   end
 
   # ── graph_version ────────────────────────────────────────────────────────────
@@ -1077,6 +1078,59 @@ class GraphService
     end
   end
 
+  # ── Graph payload helpers ─────────────────────────────────────────────────
+
+  # includes(:access_points): station_json reads them per station, so the preload avoids one
+  # query per station.
+  def load_graph_source
+    lines    = Line.order(:id).to_a
+    stations = Station.includes(:access_points).order(:line, :station_id).to_a
+    {
+      meta: GraphMeta.first!, modes: TransportMode.order(:position), payments: PaymentMethod.order(:id),
+      peak: PeakHourConfig.first, fares: FareMatrix.all.to_a, rail_fares: RailFareTable.order(:line_id).to_a,
+      lines: lines, stations: stations, edges: Edge.order(:line, :edge_id).to_a,
+      visibility: GraphVisibility.new(lines: lines, stations: stations)
+    }
+  end
+
+  def graph_payload(source, modes:, lines:, stations:, edges:, fare_matrix:, rail_fare_tables:)
+    meta = source[:meta]
+    {
+      version: meta.version,
+      lastModified: meta.last_modified.iso8601,
+      enforceOperatingHours: meta.enforce_operating_hours,
+      metadata: {
+        region: meta.region,
+        currency: meta.currency,
+        schemaVersion: meta.schema_version,
+        polylineNote: "polylineCoordinates define the static display shape of each edge. Fixed — never changes with traffic."
+      },
+      transportModes: modes,
+      paymentMethods: source[:payments].to_h { |p| [p.id, payment_json(p)] },
+      lines: lines,
+      peakHourMultipliers: source[:peak]&.data || {},
+      fareMatrix: fare_matrix.to_h { |f| [f.line_name, f.data] },
+      railFareTables: rail_fare_tables,
+      stations: stations,
+      edges: edges
+    }
+  end
+
+  # The rail fare table without the rows and columns of hidden stops.
+  def visible_rail_fare_json(table, visibility)
+    keep = table.station_ids.each_index.select { |i| visibility.station_id_visible?(table.station_ids[i]) }
+    { stationIds: keep.map { |i| table.station_ids[i] },
+      fares: keep.map { |i| keep.map { |j| table.fares.dig(i, j) } } }
+  end
+
+  def admin_line_json(line, hidden:)
+    ops_state_json(line, hidden: hidden).merge(direction: line.direction)
+  end
+
+  def ops_state_json(record, hidden:)
+    { enabled: record.enabled, disabledReason: record.disabled_reason, hiddenFromRiders: hidden }
+  end
+
   # ── JSON serializers ──────────────────────────────────────────────────────
 
   def mode_json(m)
@@ -1096,7 +1150,8 @@ class GraphService
   end
 
   def line_json(l)
-    h = { id: l.id, displayName: l.display_name, mode: l.mode, lastStopNumber: l.last_stop_number }
+    h = { id: l.id, displayName: l.display_name, mode: l.mode, lastStopNumber: l.last_stop_number,
+          baseKm: l.base_km.to_f }
     h[:colorHex] = l.color_hex if l.color_hex.present?
     h
   end

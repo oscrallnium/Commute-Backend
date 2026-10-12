@@ -24,6 +24,19 @@ module Api
           end
         end
 
+        # DELETE /api/v1/admin/lines/:id
+        # Refuses a line that a stop or an edge still uses. See LineDeletion.
+        def destroy
+          result = LineDeletion.call(@line.id)
+          if result.success?
+            bust_graph_cache!
+            render json: { data: result.data }, status: :ok
+          else
+            render json: { error: "Delete failed", errors: result.errors.map { |e| e[:message] } },
+                   status: :unprocessable_content
+          end
+        end
+
         private
 
         def set_line

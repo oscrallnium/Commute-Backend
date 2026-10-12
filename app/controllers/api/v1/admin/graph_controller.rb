@@ -4,6 +4,27 @@ module Api
       class GraphController < BaseController
         before_action :require_admin!
 
+        # GET /api/v1/admin/graph
+        # Every line, stop, and edge, including the ones hidden from riders. Never cached.
+        def show
+          json_response(GraphService.assemble_admin_graph)
+        end
+
+        # POST /api/v1/admin/graph/publish
+        # The raw body keeps null cells in the rail fare rows. Rails params can drop them.
+        def publish
+          body = JSON.parse(request.raw_post.presence || "{}")
+          unless body.is_a?(Hash)
+            return render json: { error: "Bad request", message: "Send a JSON object." }, status: :bad_request
+          end
+
+          result = GraphPublisher.publish(base_version: body["base_version"], changes: body["changes"], user: current_user)
+          bust_graph_cache!(extra_pattern: "stations*") if result.status == :created
+          render json: result.body, status: result.status
+        rescue JSON::ParserError
+          render json: { error: "Bad request", message: "The body is not valid JSON." }, status: :bad_request
+        end
+
         # POST /api/v1/admin/graph/routes
         # Adds a new route to the transit graph.
         # Body matches the Hono RoutePayload shape exactly — web admin needs no changes.

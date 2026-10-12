@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 26) do
+ActiveRecord::Schema[7.2].define(version: 30) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -80,6 +80,8 @@ ActiveRecord::Schema[7.2].define(version: 26) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.boolean "is_road_snapped", default: false, null: false
+    t.boolean "enabled", default: true, null: false
+    t.string "disabled_reason"
     t.index ["from_station"], name: "index_edges_on_from_station"
     t.index ["line"], name: "index_edges_on_line"
     t.index ["mode"], name: "index_edges_on_mode"
@@ -98,6 +100,16 @@ ActiveRecord::Schema[7.2].define(version: 26) do
     t.string "region", default: "Metro Manila, Philippines", null: false
     t.string "currency", default: "PHP", null: false
     t.boolean "enforce_operating_hours", default: true, null: false
+  end
+
+  create_table "graph_versions", force: :cascade do |t|
+    t.integer "version", null: false
+    t.datetime "published_at", null: false
+    t.uuid "published_by_id"
+    t.jsonb "change_list", default: [], null: false
+    t.integer "change_count", null: false
+    t.index ["published_by_id"], name: "index_graph_versions_on_published_by_id"
+    t.index ["version"], name: "index_graph_versions_on_version", unique: true
   end
 
   create_table "incidents", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -121,6 +133,12 @@ ActiveRecord::Schema[7.2].define(version: 26) do
     t.datetime "updated_at", null: false
     t.integer "last_stop_number", default: 0, null: false
     t.string "color_hex"
+    t.boolean "enabled", default: true, null: false
+    t.string "disabled_reason"
+    t.decimal "base_km", precision: 6, scale: 2, default: "0.0", null: false
+    t.string "direction", default: "both", null: false
+    t.check_constraint "base_km >= 0::numeric", name: "lines_base_km_check"
+    t.check_constraint "direction::text = ANY (ARRAY['both'::character varying, 'one_way'::character varying]::text[])", name: "lines_direction_check"
   end
 
   create_table "payment_methods", id: :string, force: :cascade do |t|
@@ -134,6 +152,13 @@ ActiveRecord::Schema[7.2].define(version: 26) do
 
   create_table "peak_hour_config", force: :cascade do |t|
     t.jsonb "data", default: {}, null: false
+  end
+
+  create_table "rail_fare_tables", primary_key: "line_id", id: :string, force: :cascade do |t|
+    t.jsonb "station_ids", default: [], null: false
+    t.jsonb "fares", default: [], null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "route_plan_events", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -197,6 +222,8 @@ ActiveRecord::Schema[7.2].define(version: 26) do
     t.datetime "updated_at", null: false
     t.integer "sequence"
     t.string "boarding", default: "both", null: false
+    t.boolean "enabled", default: true, null: false
+    t.string "disabled_reason"
     t.index ["line", "sequence"], name: "index_stations_on_line_and_sequence"
     t.index ["line"], name: "index_stations_on_line"
     t.index ["name"], name: "idx_stations_name_trgm", opclass: :gin_trgm_ops, using: :gin
@@ -241,6 +268,7 @@ ActiveRecord::Schema[7.2].define(version: 26) do
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "ar_world_maps", "users"
+  add_foreign_key "graph_versions", "users", column: "published_by_id", on_delete: :nullify
   add_foreign_key "route_plan_events", "users"
   add_foreign_key "saved_routes", "users"
   add_foreign_key "station_access_points", "stations", primary_key: "station_id", on_delete: :cascade, deferrable: :deferred

@@ -68,10 +68,14 @@ Rails.application.routes.draw do
                                   constraints: { id: GRAPH_ID }, format: false
         resources :edges,         only: %i[update],
                                   constraints: { id: GRAPH_ID }, format: false
-        resources :lines,         only: %i[update],
+        resources :lines,         only: %i[update destroy],
                                   constraints: { id: GRAPH_ID }, format: false
         get    "analytics/summary",      to: "analytics#summary"
         get    "analytics/hotspots",     to: "analytics#hotspots"
+        get    "graph",                  to: "graph#show"
+        post   "graph/publish",          to: "graph#publish"
+        get    "graph/versions",         to: "graph_versions#index"
+        get    "graph/versions/:version", to: "graph_versions#show", constraints: { version: /\d+/ }
         post   "graph/routes",           to: "graph#create_route"
         delete "graph/routes/:line_id",  to: "graph#delete_route",
                constraints: { line_id: GRAPH_ID }, format: false
