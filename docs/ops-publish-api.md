@@ -1,17 +1,9 @@
----
-title: Ops Publish API
-layout: default
-nav_order: 7
----
-
 # Ops Publish API
-{: .no_toc }
+
+Last checked against commit `106ae55` on 10/13/26.
 
 The contract between the Gora Operations Dashboard and the backend for the admin graph read,
 publish, version history, and line delete. The dashboard builds against this file.
-
-1. TOC
-{:toc}
 
 ---
 
@@ -32,6 +24,7 @@ publish, version history, and line delete. The dashboard builds against this fil
 | Status | When | Body |
 |---|---|---|
 | 401 | No token, or the token is not valid. | Devise error body. |
+| 429 | More than 60 requests in one minute from one IP address (`api/ip`). | `{ "error": "Too many requests. Please try again later." }` |
 | 403 | The user is not an admin. | `{ "error": "Forbidden", "message": "Admin access required" }` |
 
 ---
@@ -152,6 +145,7 @@ Rules for the admin graph:
 - It lists every row, also hidden ones and edges that point at a stop that does not exist.
 - `transportModes[*].lines` and `fareMatrix` list every line.
 - `railFareTables` holds each table as stored, with no rows removed.
+- A line has `colorHex` only when it is set. An edge has `direction` only when it is set. `sequence` is present only when the stop has one.
 - `boarding` and `accessPoints` follow the public rules: `boarding` is present only when it is not `"both"`. `accessPoints` is present only when the stop has one or more.
 
 ### The visibility rule
@@ -253,12 +247,15 @@ An unknown field in a change is an error. A field that is `null` where null is n
 
 `created` lists the ID of each row that an add change made. It is `[]` when no change adds a row.
 
+After a 201, the server deletes the `full_graph`, `graph_version`, and `stations*` cache entries. It does not delete `routes_index`, so `GET /api/v1/routes` can show old fares for up to 30 minutes.
+
 ### Error responses
 
-**400** — the body is not a JSON object.
+**400** — the body is not valid JSON, or it is not a JSON object.
 
 ```json
 { "error": "Bad request", "message": "The body is not valid JSON." }
+{ "error": "Bad request", "message": "Send a JSON object." }
 ```
 
 **409** — the graph changed after the draft started. Reload `GET /api/v1/admin/graph`, rebase the draft, and publish again.
@@ -576,7 +573,7 @@ version goes up by one. This endpoint does not write a history row.
 ```
 
 The server also gives 422 for `INTERCHANGE`. To delete a line with stops, use `DELETE
-/api/v1/admin/graph/routes/:line_id` first, then this endpoint.
+/api/v1/admin/graph/routes/:line_id` first, then this endpoint. The route delete keeps the `lines` row.
 
 ---
 

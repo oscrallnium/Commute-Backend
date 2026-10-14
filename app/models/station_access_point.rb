@@ -2,7 +2,7 @@ class StationAccessPoint < ApplicationRecord
   self.primary_key = "access_point_id" # TEXT PK — matches Station and Edge
 
   KINDS      = %w[entrance exit both].freeze
-  DIRECTIONS = %w[northbound southbound].freeze
+  DIRECTIONS = GraphService::DIRECTION_TAGS.keys.freeze
 
   belongs_to :station, primary_key: :station_id, foreign_key: :station_id
 

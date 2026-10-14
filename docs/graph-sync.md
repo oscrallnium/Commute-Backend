@@ -1,14 +1,6 @@
----
-title: Graph Sync
-layout: default
-nav_order: 7
----
-
 # Graph Sync
-{: .no_toc }
 
-1. TOC
-{:toc}
+Last checked against commit `106ae55` on 10/13/26.
 
 ---
 
@@ -48,7 +40,7 @@ sequenceDiagram
     Note over C: build adjacency, ready to route
 
     C->>API: GET /api/v1/graph/version
-    API-->>C: { version: 43 }
+    API-->>C: { data: { version: 43, … } }
     alt remote == cached
         Note over C: nothing to do
     else remote != cached
@@ -76,12 +68,10 @@ flowchart TD
     style D fill:#2d6cdf,color:#fff
 ```
 
-`forceSync` exists for the case where an admin toggles `enforce_operating_hours`: the server bumps
-the version, but the app shouldn't wait for the next natural poll to reflect a setting the admin
-just changed.
+`forceSync` exists for the case where an admin toggles `enforce_operating_hours`. The server does not
+raise the version for this setting, so the admin app must download the graph itself.
 
-{: .warning }
-> **The envelope matters.** The client unwraps `{ "data": … }` and re-encodes the inner value
+> **Warning:** **The envelope matters.** The client unwraps `{ "data": … }` and re-encodes the inner value
 > before writing to disk. Writing the raw response body instead would store the envelope, and the
 > loader — which has no bundle fallback — would fail to decode it on every subsequent launch. Any
 > change to the response envelope on `GET /api/v1/graph` is a breaking change.
@@ -90,13 +80,18 @@ just changed.
 
 | Action | Bumps | Busts cache |
 |:--|:--|:--|
+| `POST /admin/graph/publish` | Yes, once for all changes | Yes (`full_graph`, `graph_version`, `stations*`) |
 | `POST /admin/graph/routes` | Yes | Yes |
 | `DELETE /admin/graph/routes/:line_id` | Yes | Yes |
-| `POST /admin/stations` (insert stop) | Yes | Yes |
-| `PATCH /admin/stations/:id` | Yes | Yes |
-| `DELETE /admin/stations/:id` | Yes | Yes |
+| `POST /admin/stations` (insert stop) | Yes | Yes (with `stations*`) |
+| `PATCH /admin/stations/:id` | Yes, via `bump_version!` | Yes (with `stations*`) |
+| `DELETE /admin/stations/:id` | Yes | Yes (with `stations*`) |
 | `PATCH /admin/edges/:id` | Yes, via `bump_version!` | Yes |
-| `PATCH /admin/settings` | Yes | Yes |
+| `PATCH /admin/lines/:id` | Yes, via `bump_version!` | Yes |
+| `DELETE /admin/lines/:id` | Yes, via `LineDeletion.call` | Yes |
+| `PATCH /admin/settings` | **No** | Yes |
+
+`PATCH /admin/settings` busts the server cache but does not raise the version. A client that has the current version does not download the changed `enforceOperatingHours`. See [Known issues](backend.md#known-issues).
 
 Anything that changes what `assemble_graph` would emit **must** bump the version. A mutation that
 doesn't is invisible to every already-installed client until a cache TTL happens to expire and
@@ -108,10 +103,12 @@ something else forces a re-download — which may be never.
 |:--|:--|
 | `graph_version` | 30 s |
 | `full_graph` | 5 min |
+| `routes_index` | 30 min (no write deletes it) |
+| `stations/…` | 1 h |
 
 Admin writes call `bust_graph_cache!`, so an authored change is visible immediately rather than
 after the TTL. If a Redis blip swallows the bust, the TTL is the backstop — see
-[Backend Internals → Caching]({{ site.baseurl }}/backend#caching).
+[Backend Internals → Caching](backend.md#caching).
 
 ## Schema evolution rules
 

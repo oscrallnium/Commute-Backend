@@ -39,10 +39,10 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
     ]
   end
 
-  def post_route(line_id:, pass:)
+  def post_route(line_id:, pass:, mode: "jeepney")
     post "/api/v1/admin/graph/routes",
          params: {
-           displayName: "Test #{line_id}", lineID: line_id, mode: "jeepney",
+           displayName: "Test #{line_id}", lineID: line_id, mode: mode,
            openTime: "05:00", closeTime: "22:00",
            baseFare: 13.0, farePerKm: 1.8, acceptedPayments: ["cash"],
            isAirConditioned: false, crowdFactor: 0.7, reliability: 0.65,
@@ -52,7 +52,7 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
   end
 
   after do
-    %w[IOS_ONEWAY IOS_LEGACY IOS_TWOWAY IOS_BAD IOS_DIR].each { |l| GraphService.delete_route(l) }
+    %w[IOS_ONEWAY IOS_LEGACY IOS_TWOWAY IOS_BAD IOS_DIR IOS_EW IOS_UV].each { |l| GraphService.delete_route(l) }
   end
 
   context "the new iOS payload: direction-less and explicitly one-way" do
@@ -132,6 +132,42 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
       expect(JSON.parse(response.body)["errors"])
         .to include(a_string_matching(/can't be bidirectional/))
       expect(Station.where(line: "IOS_BAD")).to be_empty
+    end
+  end
+
+  context "east and west passes" do
+    it "writes EB and WB chains with matching edge directions" do
+      post_route(line_id: "IOS_EW",
+                 pass: { direction: "eastbound", isRoadSnapped: false, stops: circuit_stops })
+      expect(response).to have_http_status(:created)
+      post_route(line_id: "IOS_EW",
+                 pass: { direction: "westbound", isRoadSnapped: false, stops: circuit_stops })
+      expect(response).to have_http_status(:created)
+
+      east = Edge.where(line: "IOS_EW", direction: "eastbound")
+      west = Edge.where(line: "IOS_EW", direction: "westbound")
+      expect(east.pluck(:edge_id)).to include("IOS_EW_EB_S1__IOS_EW_EB_S2")
+      expect(west.pluck(:edge_id)).to include("IOS_EW_WB_S8__IOS_EW_WB_S9")
+      expect((east + west).map(&:bidirectional)).to all(be false)
+    end
+
+    it "rejects an unknown direction with the accepted values" do
+      post_route(line_id: "IOS_EW",
+                 pass: { direction: "east", isRoadSnapped: false, stops: circuit_stops })
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(response.body).to include("eastbound", "westbound", "inbound", "outbound")
+    end
+  end
+
+  context "the uv_express mode" do
+    it "is accepted once its transport mode row exists" do
+      TransportMode.find_or_create_by!(id: "uv_express") do |m|
+        m.display_name = "UV Express"
+        m.mk_directions_type = "automobile"
+      end
+      post_route(line_id: "IOS_UV", mode: "uv_express",
+                 pass: { direction: "eastbound", isRoadSnapped: false, stops: circuit_stops })
+      expect(response).to have_http_status(:created)
     end
   end
 end

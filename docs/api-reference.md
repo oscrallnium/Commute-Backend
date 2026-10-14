@@ -1,30 +1,25 @@
----
-title: API Reference
-layout: default
-nav_order: 6
----
-
 # API Reference
-{: .no_toc }
 
-1. TOC
-{:toc}
+Last checked against commit `106ae55` on 10/13/26.
 
 ---
 
-**Base URL** — `https://commute-backend-a6lj.onrender.com`
+**Base URL:** `https://commute-backend-a6lj.onrender.com`
+
+This page lists every route in `config/routes.rb`. The publish contract for the ops dashboard is in
+[Ops Publish API](ops-publish-api.md).
 
 ## Conventions
 
 ### Envelopes
 
-Successful responses wrap the payload:
+A successful response wraps the payload. `meta` is present only when the controller sets it.
 
 ```json
-{ "data": { … }, "meta": { "count": 42 } }
+{ "data": { }, "meta": { "count": 42 } }
 ```
 
-`meta` is present only when the controller supplies it. Errors:
+An error response has an `error` string. It can also have an `errors` array of strings.
 
 ```json
 { "error": "Validation failed", "errors": ["Name can't be blank"] }
@@ -32,328 +27,410 @@ Successful responses wrap the payload:
 
 ### Case
 
-| Surface | Case |
+| Surface | Key case |
 |:--|:--|
-| The graph document from `GET /api/v1/graph` | **camelCase** |
-| Everything else | **snake_case** |
+| `GET /api/v1/graph`, `GET /api/v1/admin/graph` | camelCase |
+| `PATCH /api/v1/admin/lines/:id` response | camelCase |
+| Publish, version history, and line delete | snake_case |
+| Every other endpoint | snake_case |
 
-### Auth
+### Authentication
 
-`Authorization: Bearer <jwt>` on every non-public request. A `401` causes the iOS client to sign
-the user out immediately.
+| Value | Meaning |
+|:--|:--|
+| none | No token needed. The controller calls `skip_before_action :authenticate_user!`. |
+| user | Send `Authorization: Bearer <token>`. `BaseController` runs `authenticate_user!`. |
+| admin | As `user`, and the user role is `admin`. The controller runs `before_action :require_admin!`. |
 
-### Status codes
+### Errors that apply to many routes
 
-| Code | Meaning | Client behaviour |
+| Status | Body | Cause |
 |:--|:--|:--|
-| 200–299 | OK | decode |
-| 401 | Unauthorized | post `.sessionExpired`, sign out |
-| 403 | Forbidden | admin-only endpoint |
-| 404 | Not found | |
-| 422 | Unprocessable | parses `error` + `errors[]` into one message |
-| 429 | Too many requests | rack-attack |
-| 503 | Graph unavailable | assembly failed |
+| 400 | `{ "error": "Bad request", "message": "…" }` | A required param key is missing (`ActionController::ParameterMissing`). |
+| 401 | Devise failure body, `{ "error": "<message>" }` | No token, an invalid token, or a revoked token. |
+| 403 | `{ "error": "Forbidden", "message": "Admin access required" }` | The user is not an admin. |
+| 404 | `{ "error": "Not found", "message": "…" }` | `ActiveRecord::RecordNotFound`. |
+| 422 | `{ "error": "Unprocessable", "errors": ["…"] }` | `ActiveRecord::RecordInvalid`. |
+| 429 | `{ "error": "Too many requests. Please try again later." }` | A Rack::Attack throttle. |
+| 500 | `{ "error": "Internal server error" }` | `ActiveRecord::StatementInvalid`. Other errors give the Rails default 500. |
 
-## Endpoint map
+### Rate limits
 
-```mermaid
-graph LR
-    subgraph pub["Public"]
-        H["GET /health"]
-        GV["GET /api/v1/graph/version"]
-        G["GET /api/v1/graph"]
-        ST["GET /api/v1/stations"]
-        ST1["GET /api/v1/stations/:id"]
-        RT["GET /api/v1/routes"]
-        RT1["GET /api/v1/routes/:line_id"]
-    end
-    subgraph auth["Authenticated"]
-        REG["POST /auth/register"]
-        SI["POST /auth/sign_in"]
-        SO["DELETE /auth/sign_out"]
-        RF["POST /api/v1/auth/refresh"]
-        DA["DELETE /api/v1/auth/account"]
-        ME["GET · PATCH /api/v1/me"]
-        SR["/api/v1/saved_routes"]
-        INC["/api/v1/incidents"]
-        AN["POST /api/v1/analytics/route_plan"]
-        AR["/api/v1/ar_world_maps"]
-    end
-    subgraph adm["Admin only"]
-        AGC["POST /api/v1/admin/graph/routes"]
-        AGD["DELETE /api/v1/admin/graph/routes/:line_id"]
-        ASC["/api/v1/admin/stations"]
-        AEC["PATCH /api/v1/admin/edges/:id"]
-        ASE["GET · PATCH /api/v1/admin/settings"]
-        AAN["GET /api/v1/admin/analytics/*"]
-        AU["/api/v1/admin/users"]
-    end
+| Name | Limit | Key | Applies to |
+|:--|:--|:--|:--|
+| `auth/ip` | 10 per 20 s | IP address | Paths that start with `/auth/` |
+| `auth/email` | 5 per 5 min | Lower-case `user.email` | `POST /auth/sign_in` (see [Security](security.md#rackattack)) |
+| `api/ip` | 60 per 1 min | IP address | Paths that start with `/api/` |
+| `analytics/user` | 30 per 1 min | Last word of the `Authorization` header | `POST /api/v1/analytics/route_plan` |
 
-    style pub fill:#1f4d33
-    style auth fill:#1f3a5f
-    style adm fill:#5f2b1f
-```
+A route under `/api/` counts against `api/ip` in addition to any other limit. `GET /health` has no limit.
+
+### Caches
+
+| Key | TTL | Used by |
+|:--|:--|:--|
+| `graph_version` | 30 s | `GET /api/v1/graph/version` |
+| `full_graph` | 5 min | `GET /api/v1/graph` |
+| `routes_index` | 30 min | `GET /api/v1/routes` |
+| `stations/<line>/<type>/<interchange>/<search>` | 1 h | `GET /api/v1/stations` |
+
+`bust_graph_cache!` deletes `full_graph` and `graph_version`. Some actions also delete `stations*`. Nothing deletes `routes_index`.
+
+## Route index
+
+Every route in `config/routes.rb`. `Service` is the service class that the action calls. A dash means the action uses models only.
+
+| Group | Method | Path | Auth | Controller#action | Service |
+|:--|:--|:--|:--|:--|:--|
+| Health | GET | `/health` | none | `health#show` | – |
+| Auth | POST | `/auth/register` | none | `api/v1/auth/registrations#create` | – |
+| Auth | POST | `/auth/sign_in` | none | `api/v1/auth/sessions#create` | – |
+| Auth | DELETE | `/auth/sign_out` | user | `api/v1/auth/sessions#destroy` | – |
+| Auth | POST | `/api/v1/auth/refresh` | user | `api/v1/auth/sessions#refresh` | – |
+| Auth | DELETE | `/api/v1/auth/account` | user | `api/v1/auth/registrations#destroy` | – |
+| User | GET | `/api/v1/me` | user | `api/v1/users#me` | – |
+| User | PATCH | `/api/v1/me` | user | `api/v1/users#update` | – |
+| Graph | GET | `/api/v1/graph/version` | none | `api/v1/graph#version` | `GraphService.graph_version` |
+| Graph | GET | `/api/v1/graph` | none | `api/v1/graph#show` | `GraphService.assemble_graph` |
+| Stations | GET | `/api/v1/stations` | none | `api/v1/stations#index` | – |
+| Stations | GET | `/api/v1/stations/:id` | none | `api/v1/stations#show` | – |
+| Routes | GET | `/api/v1/routes` | none | `api/v1/routes#index` | – |
+| Routes | GET | `/api/v1/routes/:line_id` | none | `api/v1/routes#show` | – |
+| Saved routes | GET | `/api/v1/saved_routes` | user | `api/v1/saved_routes#index` | – |
+| Saved routes | POST | `/api/v1/saved_routes` | user | `api/v1/saved_routes#create` | – |
+| Saved routes | DELETE | `/api/v1/saved_routes/:id` | user | `api/v1/saved_routes#destroy` | – |
+| AR maps | GET | `/api/v1/ar_world_maps` | user | `api/v1/ar_world_maps#index` | – |
+| AR maps | GET | `/api/v1/ar_world_maps/:id` | user | `api/v1/ar_world_maps#show` | – |
+| AR maps | POST | `/api/v1/ar_world_maps` | user | `api/v1/ar_world_maps#create` | – |
+| AR maps | POST | `/api/v1/ar_world_maps/:id/relocalize` | user | `api/v1/ar_world_maps#relocalize` | – |
+| Analytics | POST | `/api/v1/analytics/route_plan` | user | `api/v1/analytics#route_plan` | – |
+| Incidents | GET | `/api/v1/incidents` | user | `api/v1/incidents#index` | – |
+| Incidents | POST | `/api/v1/incidents` | user | `api/v1/incidents#create` | – |
+| Places | GET | `/api/v1/places`, `/api/v1/places/:id` | – | `api/v1/places#index`, `#show` (no controller) | – |
+| Events | GET | `/api/v1/events`, `/api/v1/events/:id` | – | `api/v1/events#index`, `#show` (no controller) | – |
+| Admin users | GET, GET, DELETE | `/api/v1/admin/users`, `/:id` | admin | `api/v1/admin/users#index`, `#show`, `#destroy` (no controller) | – |
+| Admin AR maps | GET, GET, PATCH/PUT, DELETE | `/api/v1/admin/ar_world_maps`, `/:id` | admin | `api/v1/admin/ar_world_maps#*` (no controller) | – |
+| Admin incidents | GET, PATCH/PUT, DELETE | `/api/v1/admin/incidents`, `/:id` | admin | `api/v1/admin/incidents#*` (no controller) | – |
+| Admin analytics | GET | `/api/v1/admin/analytics/summary` | admin | `api/v1/admin/analytics#summary` | – |
+| Admin analytics | GET | `/api/v1/admin/analytics/hotspots` | admin | `api/v1/admin/analytics#hotspots` | – |
+| Admin graph | GET | `/api/v1/admin/graph` | admin | `api/v1/admin/graph#show` | `GraphService.assemble_admin_graph` |
+| Admin graph | POST | `/api/v1/admin/graph/publish` | admin | `api/v1/admin/graph#publish` | `GraphPublisher.publish` |
+| Admin graph | GET | `/api/v1/admin/graph/versions` | admin | `api/v1/admin/graph_versions#index` | – |
+| Admin graph | GET | `/api/v1/admin/graph/versions/:version` | admin | `api/v1/admin/graph_versions#show` | – |
+| Admin graph | POST | `/api/v1/admin/graph/routes` | admin | `api/v1/admin/graph#create_route` | `GraphService.add_route` |
+| Admin graph | DELETE | `/api/v1/admin/graph/routes/:line_id` | admin | `api/v1/admin/graph#delete_route` | `GraphService.delete_route` |
+| Admin stations | POST | `/api/v1/admin/stations` | admin | `api/v1/admin/stations#create` | `GraphService.insert_stop` |
+| Admin stations | PATCH, PUT | `/api/v1/admin/stations/:id` | admin | `api/v1/admin/stations#update` | `GraphService.bump_version!` |
+| Admin stations | DELETE | `/api/v1/admin/stations/:id` | admin | `api/v1/admin/stations#destroy` | `GraphService.remove_stop` |
+| Admin edges | PATCH, PUT | `/api/v1/admin/edges/:id` | admin | `api/v1/admin/edges#update` | `GraphService.polyline_distance_km`, `.bump_version!` |
+| Admin lines | PATCH, PUT | `/api/v1/admin/lines/:id` | admin | `api/v1/admin/lines#update` | `GraphService.bump_version!` |
+| Admin lines | DELETE | `/api/v1/admin/lines/:id` | admin | `api/v1/admin/lines#destroy` | `LineDeletion.call` |
+| Admin settings | GET | `/api/v1/admin/settings` | admin | `api/v1/admin/settings#show` | – |
+| Admin settings | PATCH | `/api/v1/admin/settings` | admin | `api/v1/admin/settings#update` | – |
+
+Routes that carry a graph ID (`stations/:id`, `routes/:line_id`, and the admin station, edge, line, and route routes) use the `GRAPH_ID` constraint and `format: false`. The ID can contain a dot. Admin graph version routes use `version: /\d+/`.
+
+### Routes that Devise adds
+
+`devise_for :users` also adds these routes. The mobile apps do not use them.
+
+| Method | Path | Note |
+|:--|:--|:--|
+| GET | `/auth/sign_in` | `sessions#new` |
+| DELETE | `/auth/register` | Same action as `DELETE /api/v1/auth/account`. |
+| PATCH, PUT | `/auth/register` | Devise `registrations#update`. |
+| GET | `/auth/register/sign_up`, `/auth/register/edit`, `/auth/register/cancel` | Devise defaults. |
+| GET, POST, PATCH, PUT | `/password/new`, `/password`, `/password/edit` | Devise `passwords` controller. No mailer is configured. |
+
+Rails also mounts Active Storage, Action Mailbox, and Conductor routes under `/rails/`. See [Security](security.md#known-gaps).
 
 ---
+
+## Health
+
+### `GET /health`
+
+Auth: none. Rate limit: none.
+
+200: `{ "status": "ok", "db": "connected", "env": "production", "timestamp": "<ISO 8601>" }`.
+503: the same keys with `"status": "degraded"` and `"db": "error"`. Render uses this route as the health check.
 
 ## Auth
 
 ### `POST /auth/register`
 
+Auth: none. Rate limit: `auth/ip`.
+
+Body:
+
 ```json
-{ "user": { "email": "…", "password": "…",
-            "password_confirmation": "…", "display_name": "…"} }
+{ "user": { "email": "…", "password": "…", "password_confirmation": "…", "display_name": "…" } }
 ```
 
-→ `{ "data": { "token": "eyJ…", "user": { id, email, display_name, role } } }`
+201: `{ "data": { "token": "<jwt>", "user": { "id", "email", "display_name", "role" } } }`. The role is always `commuter`.
+422: `{ "error": "Registration failed", "errors": ["…"] }`. 400: the `user` key is missing.
 
 ### `POST /auth/sign_in`
 
-```json
-{ "user": { "email": "…", "password": "…"} }
-```
+Auth: none. Rate limits: `auth/ip`, `auth/email`.
 
-→ same shape. `401 { "error": "Invalid email or password"}` on failure.
-
-### `POST /api/v1/auth/refresh`
-
-No body. Rotates the user's JTI — **the token used to make this call is dead afterwards** — and
-returns a fresh one.
+Body: `{ "user": { "email": "…", "password": "…" } }`.
+200: `{ "data": { "token": "<jwt>", "user": { "id", "email", "display_name", "role" } } }`. The token is also in the `Authorization` response header.
+401: Devise failure body.
 
 ### `DELETE /auth/sign_out`
 
-Revokes server-side.
+Auth: user. Rate limit: `auth/ip`. 200: `{ "message": "Signed out successfully" }`. The server rotates the user `jti`, so every token of that user stops working.
+
+### `POST /api/v1/auth/refresh`
+
+Auth: user. No body. Rate limit: `api/ip`.
+
+200: the same shape as sign in. The server rotates the `jti`. The token that made the call stops working.
+401: `{ "error": "Unauthorized" }`. An expired token also gives 401.
 
 ### `DELETE /api/v1/auth/account`
 
-Full account deletion. Present for App Store compliance.
+Auth: user. Rate limit: `api/ip`. 200: `{ "message": "Account deleted successfully" }`.
+500: `{ "error": "Could not delete account", "message": "<exception text>" }`. See [Known issues](backend.md#known-issues).
 
 ## User
 
-| Method | Path | Body |
-|:--|:--|:--|
-| `GET` | `/api/v1/me` | — |
-| `PATCH` | `/api/v1/me` | `{ "user": { "display_name": …, "home_station_id": … } }` |
+### `GET /api/v1/me`
+
+200: `{ "data": { "id", "email", "display_name", "role", "home_station_id", "created_at" } }`.
+
+### `PATCH /api/v1/me`
+
+Body: `{ "user": { "display_name": "…", "home_station_id": "…" } }`. Both keys are optional.
+200: `{ "data": { "id", "email", "display_name", "home_station_id" } }`. 422: `{ "error": "Update failed", "errors": [] }`. The server does not check that `home_station_id` exists.
 
 ## Graph
-{: .d-inline-block }
-
-Public
-{: .label .label-green }
 
 ### `GET /api/v1/graph/version`
 
-```json
-{ "data": { "version": 42, "lastModified": "2026-08-10T09:12:33Z",
-            "stationCount": 60, "edgeCount": 76 } }
-```
-
-Cheap poll — the client checks this before deciding to download the full graph. Cached 30 s.
-
-{: .note }
-> `version` is an **Int** here. The client's `GraphVersion` decoder accepts Int or String and
-> normalises to String; a careless type change breaks OTA sync.
+200: `{ "data": { "version": 42, "lastModified": "<ISO 8601>", "stationCount": 60, "edgeCount": 76 } }`.
+The counts include hidden rows. 503: `{ "error": "Graph unavailable", "message": "<exception text>" }`.
 
 ### `GET /api/v1/graph`
 
-The entire graph document — see [Data Model]({{ site.baseurl }}/data-model#the-json-document).
-camelCase, cached 5 minutes. `503 { "error": "Graph unavailable", "message": … }` if assembly
-fails.
+200: `{ "data": <graph document> }`. See [Data Model](data-model.md#the-json-document).
+The server leaves out hidden lines, stops, and edges. 503: as above.
 
 ## Stations
-{: .d-inline-block }
-
-Public
-{: .label .label-green }
 
 ### `GET /api/v1/stations`
 
-Query params: `line`, `type`, `interchange=true`, `search` (trigram-backed `ILIKE` over name /
-short name / line). Cached 1 hour per parameter combination.
-
-→ `{ "data": [… ], "meta": { "count": n } }`
+Query keys: `line`, `type`, `interchange` (only the value `true` filters), `search` (`ILIKE` on `name`, `short_name`, `line`).
+200: `{ "data": [<station>], "meta": { "count": n } }`, ordered by `line`, then `name`. The result includes hidden stops.
 
 ### `GET /api/v1/stations/:id`
 
-`:id` accepts dots.
+200: `{ "data": <station> }`. 404: `{ "error": "Not found", "message": "…" }`.
+
+A station has these keys: `id`, `name`, `short_name`, `line`, `type`, `coordinates { lat, lng }`, `is_terminal`, `is_interchange`, `boarding`, `amenities`, `operating_hours { open, close }`, `access_points`, and `sequence` (only when set).
+An access point has `id`, `station_id`, `name`, `kind`, `direction`, `coordinates`, `position`.
 
 ## Routes (lines)
-{: .d-inline-block }
-
-Public
-{: .label .label-green }
 
 ### `GET /api/v1/routes`
 
-One entry per line: `line_id`, `mode`, `base_fare`, `accepted_payments`, `is_air_conditioned`,
-`crowd_factor`, `reliability`, `stop_count`. Optional `mode` and `search` filters, applied in Ruby
-after the cached fetch.
+Query keys: `mode`, `search` (substring of the line ID, upper-cased). The server filters in Ruby after the cache read.
+200: `{ "data": [{ "line_id", "mode", "base_fare", "accepted_payments", "is_air_conditioned", "crowd_factor", "reliability", "stop_count" }], "meta": { "count": n } }`.
 
 ### `GET /api/v1/routes/:line_id`
 
-Line metadata plus every station and edge on it. `404` if the line has no stations.
+200: `{ "data": { "line_id", "mode", "base_fare", "accepted_payments", "is_air_conditioned", "crowd_factor", "reliability", "stations": [], "edges": [] } }`. Edge keys: `id`, `from`, `to`, `mode`, `line`, `travel_time_minutes`, `distance_km`, `base_fare`, `fare_per_km`, `accepted_payments`, `is_air_conditioned`, `crowd_factor`, `reliability`, `bidirectional`, `direction`, `polyline_coordinates`, `mk_directions_transport_type`, `is_road_snapped`.
+404: `{ "error": "Route not found" }` when the line has no stations.
 
 ## Saved routes
 
-| Method | Path | Body |
-|:--|:--|:--|
-| `GET` | `/api/v1/saved_routes` | — |
-| `POST` | `/api/v1/saved_routes` | `{ "saved_route": { name, origin_station_id, destination_station_id, line_ids } }` |
-| `DELETE` | `/api/v1/saved_routes/:id` | — |
+### `GET /api/v1/saved_routes`
 
-## Incidents
+200: `{ "data": [{ "id", "name", "origin_station_id", "destination_station_id", "legs", "created_at" }] }`, newest first.
 
-| Method | Path | Notes |
-|:--|:--|:--|
-| `GET` | `/api/v1/incidents` | Active only — `expires_at IS NULL OR > now()` |
-| `POST` | `/api/v1/incidents` | `{ "incident": { station_id, description, category } }` |
+### `POST /api/v1/saved_routes`
 
-`category` ∈ `delay` · `crowding` · `breakdown` · `closure` · `other`.
+Body:
+
+```json
+{ "saved_route": { "name": "…", "origin_station_id": "…", "destination_station_id": "…",
+  "legs": [{ "line_id": "…", "mode": "…", "from_station": "…", "to_station": "…", "travel_time_minutes": 4 }] } }
+```
+
+201: `{ "data": <saved route> }`. 422: `{ "error": "Could not save route", "errors": [] }`.
+
+### `DELETE /api/v1/saved_routes/:id`
+
+200: `{ "message": "Saved route deleted" }`. 404 when the route belongs to another user.
+
+## AR world maps
+
+A map has `status` `pending`, `approved`, or `rejected`. A user who is not an admin sees approved maps only.
+
+### `GET /api/v1/ar_world_maps`
+
+Query keys: `station_id`, `status`, `page`, `items` (Pagy). 200: `{ "data": [<map>], "meta": { "current_page", "total_pages", "total_count", "per_page" } }`.
+Map keys: `id`, `station_id`, `version`, `status`, `uploaded_by`, `file_size_mb`, `created_at`.
+Warning: this action raises `NoMethodError` today. See [Known issues](backend.md#known-issues).
+
+### `GET /api/v1/ar_world_maps/:id`
+
+200: `{ "data": <map> }` with `download_url` when a file is attached. 404: `{ "error": "Not found" }`, also for a map that is not approved when the user is not an admin.
+
+### `POST /api/v1/ar_world_maps`
+
+Multipart form keys: `station_id`, `map_file`. 201: `{ "data": <map> }` with `status` `pending`. The server sets `version` to the highest version of the station plus one.
+400: `{ "error": "map_file is required" }`. 413: `{ "error": "File too large (max 150 MB)" }`. 422: `{ "error": "Upload failed", "errors": [] }`.
+
+### `POST /api/v1/ar_world_maps/:id/relocalize`
+
+Top-level body keys: `accuracy`, `device`. 200: `{ "message": "Logged", "event_count": n }`. The server keeps the last 100 events in `metadata.relocalization_events`. 404 for an unknown map.
 
 ## Analytics
 
 ### `POST /api/v1/analytics/route_plan`
 
+Rate limits: `analytics/user`, `api/ip`.
+
 ```json
-{ "event": { "origin_station_id": "…", "destination_station_id": "…",
-             "line_ids": ["MRT-3"], "duration_seconds": 1860 } }
+{ "event": { "origin_station_id": "…", "destination_station_id": "…", "line_ids": ["MRT3"], "duration_seconds": 1860 } }
 ```
 
-Server-side, `duration_seconds` becomes `total_time_minutes` (ceil) and `line_ids` is stored in
-`modes_used`.
+Always 201 `{ "message": "Logged" }`. The action rescues every error. A write failure looks like success. `duration_seconds` becomes `total_time_minutes` (rounded up). `line_ids` goes to `modes_used`.
 
-{: .warning }
-> This endpoint **always returns `201 { "message": "Logged"}`, even on failure.** The controller
-> rescues everything and logs a warning, deliberately — an analytics failure must never block
-> someone's commute. The consequence: a silent total failure looks exactly like success. Verify
-> ingestion with a `RoutePlanEvent.count`, never with a response code.
+## Incidents
 
-## AR world maps
+### `GET /api/v1/incidents`
 
-| Method | Path | Notes |
-|:--|:--|:--|
-| `GET` | `/api/v1/ar_world_maps` | Approved only for non-admins |
-| `GET` | `/api/v1/ar_world_maps/:id` | Includes a signed download URL |
-| `POST` | `/api/v1/ar_world_maps` | Multipart `.arworldmap` via Active Storage |
-| `POST` | `/api/v1/ar_world_maps/:id/relocalize` | |
+200: `{ "data": [{ "id", "station_id", "line_id", "category", "description", "reported_by", "created_at" }] }`. Active incidents only (`expires_at` is null or in the future). Newest first, 50 at most.
 
-Status: `pending` · `approved` · `rejected`.
+### `POST /api/v1/incidents`
 
----
+Body: `{ "incident": { "station_id", "line_id", "category", "description" } }`. `category` is `delay`, `crowding`, `breakdown`, `closure`, or `other`.
+201: `{ "data": <incident> }`. 422: `{ "error": "Could not report incident", "errors": [] }`. A `category` outside the list raises `ArgumentError` (500).
 
-## Admin
-{: .d-inline-block }
+## Places and events
 
-Admin only
-{: .label .label-red }
+`GET /api/v1/places`, `/api/v1/places/:id`, `/api/v1/events`, and `/api/v1/events/:id` have no controller. The router raises a routing error. Do not call them.
 
-All require `role == admin`; otherwise
-`403 { "error": "Forbidden", "message": "Admin access required"}`.
+## Admin: users, AR maps, incidents
+
+`/api/v1/admin/users`, `/api/v1/admin/ar_world_maps`, and `/api/v1/admin/incidents` have no controller. The router raises a routing error. Do not call them.
+
+## Admin: analytics
+
+All routes in this section need the `admin` role.
+
+### `GET /api/v1/admin/analytics/summary`
+
+200: `{ "data": { "dau", "wau", "total_users", "route_plans_today", "top_origins": [{ "station_id", "count" }], "top_destinations": [], "mode_share": { "<line id>": n } } }`. Top lists cover 7 days, 5 rows.
+
+### `GET /api/v1/admin/analytics/hotspots`
+
+200: `{ "data": [{ "station_id", "count" }] }`. The 20 top origins of the last 30 days.
+
+## Admin: graph read, publish, history
+
+These routes are in [Ops Publish API](ops-publish-api.md): `GET /api/v1/admin/graph`, `POST /api/v1/admin/graph/publish`, `GET /api/v1/admin/graph/versions`, `GET /api/v1/admin/graph/versions/:version`.
+Errors: 400 (not a JSON object), 409 (version conflict or lock busy), 422 (validation), 404 (unknown version).
+
+## Admin: route create and delete
 
 ### `POST /api/v1/admin/graph/routes`
 
-Creates a whole line.
+Adds a whole line. The server calls `GraphService.add_route(params.to_unsafe_h)`. The body uses camelCase keys.
 
-```jsonc
-{
-  "displayName": "UPLB Kanan",
-  "lineID": "UPLB_KANAN",
-  "mode": "jeepney",
-  "isAirConditioned": false,
-  "baseFare": 13, "farePerKm": 1.8,
-  "acceptedPayments": ["cash"],
-  "openTime": "05:00", "closeTime": "22:00",
-  "crowdFactor": 0.7, "reliability": 0.65,
+| Key | Type | Rule |
+|:--|:--|:--|
+| `lineID` | String | Required. A new line matches `^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$`. An existing line also accepts a dot. No spaces. |
+| `displayName` | String | Required. |
+| `mode` | String | Required. Must be an ID in `transport_modes`. |
+| `baseFare`, `farePerKm` | Number | 0 or more. |
+| `crowdFactor`, `reliability` | Number | 0 to 1. |
+| `acceptedPayments` | Array of String | At least one. Each must be an ID in `payment_methods`. |
+| `isAirConditioned` | Bool | Optional. |
+| `openTime`, `closeTime` | String | Required. `HH:mm`. |
+| `colorHex` | String | Optional. `#RRGGBB`. |
+| `stops` | Array | Flat shape. One pass. Each stop: `name` (required), `lat`, `lng` (required), `shortName`, `polyline` (array of `{ lat, lng }`). |
+| `passes` | Array | Multi-pass shape. Each pass: `direction` (`northbound`, `southbound`, or omit), `stops`, `closesLoop`, `closingPolyline`, `bidirectional`, `isRoadSnapped`. |
+| `direction`, `bidirectional`, `closesLoop`, `closingPolyline` | | Flat-shape twins of the pass keys. |
 
-  // either:
-  "stops": [{ "name": "…", "shortName": "…", "lat": 14.16, "lng": 121.24 }, … ],
-  // or:
-  "passes": [
-    { "direction": "northbound", "stops": [… ], "closesLoop": false },
-    { "direction": "southbound", "stops": [… ], "closesLoop": true,
-      "closingPolyline": [{ "lat": …, "lng": … } ] }
-  ]
-}
-```
+Rules: each pass needs 2 or more stops. A direction can appear once. A pass with a `direction` cannot set `bidirectional: true`. A train line cannot take more passes. An existing line accepts a new direction only.
+When `bidirectional` is absent, the pass is bidirectional only when it has no `direction`.
+The server makes stop IDs `<LINE>_S<n>` or `<LINE>_NB_S<n>`, and edge IDs `<FROM>__<TO>`.
 
-→ `{ "data": { "lineId": "UPLB_KANAN", "stationsAdded": 12, "edgesAdded": 11 } }`
-
-Generated IDs: stations `{lineID}_STOP1…n`, edges `{lineID}_SEG1…n-1`. `isTerminal` is decided
-server-side from stop index — never trusted from the client.
+201: `{ "data": { "line_id", "stations_added", "edges_added" } }`.
+422: `{ "error": "Validation failed", "errors": ["<message>"] }`. A database failure also gives 422 with the text `Database write failed: …`.
 
 ### `DELETE /api/v1/admin/graph/routes/:line_id`
 
-Removes the line's stations, edges and `lines` row, and detaches the ID from
-`transport_modes.lines`. `:line_id` may contain dots.
+Removes the stops and edges of the line, and every edge that touches a removed stop. It removes the line ID from `transport_modes.lines`. It keeps the `lines` row, the fare rows, and the rail fare table. Use `DELETE /api/v1/admin/lines/:id` to remove those.
+200: `{ "data": { "line_id", "stations_removed", "edges_removed" } }`. 422: `{ "error": "Delete failed", "errors": ["No route found with line ID '…'."] }`.
+
+## Admin: stations
 
 ### `POST /api/v1/admin/stations`
 
-Inserts one stop into an existing line, splitting or extending the edge chain and renumbering the
-sequence. Subject to the three narrowing rules in
-[Backend Internals]({{ site.baseurl }}/backend#insert_stop--remove_stop--deliberately-narrow).
+Inserts one stop. The server calls `GraphService.insert_stop(params.to_unsafe_h)`.
 
-→ `{ "data": { "lineId": "…", "stationId": "…"} }`
+| Key | Rule |
+|:--|:--|
+| `referenceStationId` | Required. A stop of the line, with an ID that ends in `_S<n>` or `_STOP<n>`. |
+| `position` | Required. `before` or `after`. |
+| `name` | Required. |
+| `lat`, `lng` | Required. |
+| `shortName`, `openTime`, `closeTime` | Optional. The defaults come from the name and the reference stop. |
+| `newEdgePolylines` | Optional. Array of paths of 3 or more points, in creation order. |
+
+Rules: the server refuses a train stop. A stop with the same name within 5 m on the same chain is the same stop, and the response is 201 with that stop. The server changes `sequence` values only. It never renames a stop or an edge.
+201: `{ "data": { "line_id", "station_id" } }`. 422: `{ "error": "Validation failed", "errors": ["…"] }`.
 
 ### `PATCH /api/v1/admin/stations/:id`
 
-```jsonc
-{ "station": {
-    "latitude": 14.1642, "longitude": 121.2413,
-    "name": "…", "short_name": "…",
-    "open_time": "05:00", "close_time": "22:00",
-    "access_points": [
-      { "access_point_id": "…", "name": "North gate", "kind": "entrance",
-        "direction": null, "lat": …, "lng": … }
-    ]
-} }
-```
+Body: `{ "station": { … } }`. Every key is optional.
 
-Every field is optional; only what changed is sent.
+| Key | Rule |
+|:--|:--|
+| `lat` / `latitude`, `lng` / `longitude` | Applied only when a latitude is present. The server sets both. |
+| `name`, `short_name`, `open_time`, `close_time` | Applied when present. The server trims them. |
+| `boarding` | `both` or `alight_only`. |
+| `access_points` | An array. It replaces the whole set. A door that is absent is deleted. Omit the key to keep the doors. |
 
-{: .important }
-> **`access_points` replaces the station's entire door set.** A door left out is a door deleted —
-> that is how removal works, and why the editor always sends the full list rather than a diff.
-> Omit the key entirely to leave doors untouched. Send `[]` to clear them. Send `direction` as
-> explicit JSON `null` to mean "serves every direction"— omitting the key means the server can't
-> write NULL.
+An access point has `access_point_id` (or `id`), `name`, `kind` (`entrance`, `exit`, `both`), `direction` (`northbound`, `southbound`, or `null`), `lat`/`lng` (or `coordinates { lat, lng }`), `position`.
+200: `{ "data": <station> }`. 404: `{ "error": "Station not found" }`. 422: `{ "error": "Update failed", "errors": [] }`. The action bumps the graph version and busts `stations*`.
 
 ### `DELETE /api/v1/admin/stations/:id`
 
-Removes a stop and merges its two adjacent edges — or drops the single adjacent edge if it was a
-terminal.
+Removes a stop and merges the two adjacent edges. A terminal drops its one edge. The server refuses a train stop, a stop with a non-standard ID, and a chain of 2 stops.
+200: `{ "data": { "line_id" } }`. 404: `{ "error": "Station not found" }`. 422: `{ "error": "Delete failed", "errors": ["…"] }`.
+
+## Admin: edges
 
 ### `PATCH /api/v1/admin/edges/:id`
 
-```jsonc
-{ "edge": {
-    "polyline_coordinates": [{ "lat": …, "lng": … }, … ],
-    "bidirectional": true,
-    "direction": "northbound"// or null to clear
-} }
-```
+Body: `{ "edge": { "polyline_coordinates": [{ "lat", "lng" }], "bidirectional": true, "direction": "northbound" } }`.
+Send at least one key. Each key applies on its own. `direction: null` clears the label. The server refuses `bidirectional: true` together with a `direction`.
+When the body has `polyline_coordinates`, the server recomputes `distance_km` and sets `is_road_snapped` to `true`. It never changes `travel_time_minutes`.
+200: `{ "data": <edge> }`. 404: `{ "error": "Edge not found" }`. 422: `{ "error": "Nothing to update" | "Update failed", "errors": [] }`.
 
-Each field applies **independently** — a directionality edit must not rewrite geometry. When
-`polyline_coordinates` is supplied the server recomputes `distance_km` via
-`GraphService.polyline_distance_km`.
+## Admin: lines
 
-### `GET` / `PATCH /api/v1/admin/settings`
+### `PATCH /api/v1/admin/lines/:id`
 
-```json
-{ "data": { "enforce_operating_hours": true } }
-```
+Body: `{ "line": { "color_hex": "#RRGGBB" } }`. `null` clears the color.
+200: `{ "data": { "id", "displayName", "mode", "colorHex" } }`. 404: `{ "error": "Line not found" }`. 422: `{ "error": "Nothing to update" | "Update failed", "errors": [] }`.
 
-A graph-wide switch. When false, the client's A\* skips every station operating-hours check —
-useful when hours data is incomplete and legitimate routes are being filtered out. Changing it
-busts the graph cache and bumps the version, so clients re-sync.
+### `DELETE /api/v1/admin/lines/:id`
 
-### `GET /api/v1/admin/analytics/summary` · `/hotspots`
+See [Ops Publish API](ops-publish-api.md#delete-apiv1adminlinesid). 200: `{ "data": { "line_id", "version" } }`.
 
-Aggregates over `route_plan_events`.
+## Admin: settings
 
-### `/api/v1/admin/users` · `/admin/incidents` · `/admin/ar_world_maps`
+### `GET /api/v1/admin/settings`
 
-Standard index / show / update / destroy moderation endpoints.
+200: `{ "data": { "enforce_operating_hours": true } }`.
 
-## Health
+### `PATCH /api/v1/admin/settings`
 
-`GET /health` — unauthenticated, used by Render's health check and UptimeRobot.
+Body: `{ "enforce_operating_hours": false }`. 200: the same shape as GET. The action busts the graph cache. It does not raise the graph version.

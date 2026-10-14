@@ -13,7 +13,7 @@ class GraphService
   # Average speed in km/h per mode for an edge shorter than EXPRESS_GAP_KM.
   SPEED_KMH_BY_MODE = { "bus" => 22.0, "jeepney" => 16.0, "tricycle" => 15.0, "train" => 30.0 }.freeze
   DEFAULT_SPEED_KMH = 22.0
-  ROAD_MODES        = %w[bus jeepney tricycle].freeze
+  ROAD_MODES        = %w[bus jeepney tricycle uv_express].freeze
   # A road edge at least EXPRESS_GAP_KM long runs on an expressway at EXPRESS_SPEED_KMH.
   EXPRESS_GAP_KM    = 5.0
   EXPRESS_SPEED_KMH = 45.0
@@ -27,6 +27,12 @@ class GraphService
   # A generated stop id: the chain, then `_STOP<n>` (legacy) or `_S<n>`.
   STOP_ID_RE  = /\A(.+)_(?:STOP|S)(\d+)\z/
   TIME_RE     = /\A([01]\d|2[0-3]):[0-5]\d\z/
+
+  # Each accepted direction word and the tag it adds to a chain id.
+  DIRECTION_TAGS = {
+    "northbound" => "NB", "southbound" => "SB", "eastbound" => "EB",
+    "westbound" => "WB", "inbound" => "IN", "outbound" => "OUT"
+  }.freeze
 
   Result = Struct.new(:success?, :data, :errors, keyword_init: true)
 
@@ -116,8 +122,8 @@ class GraphService
         # still applies, so existing payloads (iOS Loop Creator, web admin flat shape)
         # and every route already in the database behave exactly as before.
         bidirectional = pass[:bidirectional].nil? ? direction.nil? : pass[:bidirectional]
-        # A direction-less pass uses the line id as its chain (`LINE_S1`). A northbound or
-        # southbound pass gets its own chain (`LINE_NB_S1`), so both passes share one line id.
+        # A direction-less pass uses the line id as its chain (`LINE_S1`). A directional
+        # pass gets its own chain (`LINE_NB_S1`, `LINE_EB_S1`), so passes share one line id.
         tag       = direction_tag(direction)
         id_prefix = tag ? "#{line_id}_#{tag}" : line_id
 
@@ -203,9 +209,8 @@ class GraphService
         end
 
         # Closing (loop-back) segment — only meaningful for a direction-less pass (a
-        # northbound/southbound leg is inherently one-way, so the client never sends
-        # closesLoop for those); honored here regardless of direction since nothing
-        # downstream assumes otherwise.
+        # directional leg is one-way, so the client never sends closesLoop for it);
+        # honored here regardless of direction since nothing downstream assumes otherwise.
         next unless pass[:closes_loop] && stops.length >= 2
 
         first_id   = stop_ids.first
@@ -600,7 +605,7 @@ class GraphService
       errors << { field: "lineID", message: "Line ID must start with an uppercase letter and use only uppercase letters, digits, and single underscores." }
     elsif line_exists
       # Not an outright rejection — this is also the path for adding the missing
-      # northbound/southbound direction to a route that already has the other one.
+      # direction to a route that already has a different one.
       # #existing_line_append_error decides which case it actually is.
       append_error = existing_line_append_error(line_id, passes)
       errors << { field: "lineID", message: append_error } if append_error
@@ -660,9 +665,9 @@ class GraphService
       stops     = pass[:stops]
       label     = direction ? "#{direction} pass" : (passes.length > 1 ? "pass #{p_idx + 1}" : "route")
 
-      unless direction.nil? || %w[northbound southbound].include?(direction)
+      unless direction.nil? || DIRECTION_TAGS.key?(direction)
         errors << { field: "passes[#{p_idx}].direction",
-                    message: "direction must be \"northbound\", \"southbound\", or omitted." }
+                    message: "direction must be one of #{DIRECTION_TAGS.keys.join(", ")}, or omitted." }
       end
 
       if direction && seen_directions.include?(direction)
@@ -805,7 +810,8 @@ class GraphService
 
   def mk_type_for(mode)
     { "train" => "train", "bus" => "bus", "jeepney" => "automobile",
-      "e_jeepney" => "automobile", "tricycle" => "automobile" }.fetch(mode, "transit")
+      "e_jeepney" => "automobile", "tricycle" => "automobile",
+      "uv_express" => "automobile" }.fetch(mode, "transit")
   end
 
   def payload_color(payload)
@@ -823,7 +829,7 @@ class GraphService
   end
 
   def direction_tag(direction)
-    { "northbound" => "NB", "southbound" => "SB" }[direction]
+    DIRECTION_TAGS[direction]
   end
 
   def bump_graph_version!
@@ -896,9 +902,8 @@ class GraphService
   end
 
   # Decides whether add_route may write into an *existing* line_id — the only
-  # legitimate case is adding the one missing direction (northbound/southbound) to
-  # a route that already has the other. Returns nil when that's exactly what this
-  # payload is doing (safe to proceed); otherwise a user-facing rejection message.
+  # legitimate case is adding a direction that the line does not have yet. Returns nil when
+  # that's exactly what this payload is doing (safe to proceed); otherwise a rejection message.
   #
   # Never allowed for train mode: MRT/LRT stations are shared by both directions'
   # edges already (see the same reasoning in insert_stop/remove_stop above) — the
@@ -916,8 +921,8 @@ class GraphService
 
     new_directions = passes.filter_map { |p| p[:direction] }
     if new_directions.empty?
-      return "Line ID '#{line_id}' already exists — pick a different Line ID, or record a Northbound/Southbound " \
-             "direction to add it to that route."
+      return "Line ID '#{line_id}' already exists — pick a different Line ID, or record a new " \
+             "direction (#{DIRECTION_TAGS.keys.join(", ")}) to add it to that route."
     end
 
     colliding = new_directions & existing_directions

@@ -1,14 +1,6 @@
----
-title: Architecture
-layout: default
-nav_order: 3
----
-
 # Architecture
-{: .no_toc }
 
-1. TOC
-{:toc}
+Last checked against commit `106ae55` on 10/13/26.
 
 ---
 
@@ -25,7 +17,7 @@ graph TB
     end
 
     subgraph Render["Render — Singapore"]
-        API["commutebeh-rails<br/>Rails 7.1 · Puma"]
+        API["commutebeh-rails<br/>Rails 7.2 · Puma"]
         RC[("Redis cache")]
     end
 
@@ -97,7 +89,7 @@ get "stations/:id", to: "stations#show",
 ```
 
 If you add a route whose path carries a station, edge or line ID, it needs both the constraint
-and `format: false`. `config/routes.rb:15`.
+and `format: false`. See `GRAPH_ID` in `config/routes.rb`.
 
 ## Cold start, end to end
 
@@ -129,7 +121,7 @@ sequenceDiagram
     Note over App: write to Documents/,<br/>build adjacency, ready to route
 
     App->>API: GET /api/v1/graph/version (subsequent launches)
-    API-->>App: { version: 43 }
+    API-->>App: { data: { version: 43, … } }
     Note over App: differs from cached? → re-download
 ```
 
@@ -155,19 +147,19 @@ graph TD
 owns the transaction boundary and the version bump. A controller that writes a station row itself
 will produce a graph the clients never learn about, because nothing bumped the version.
 
-The one sanctioned exception is `EdgesController#update`, which mutates a single edge and then
-calls `GraphService.bump_version!` explicitly — a public class method that exists for exactly this
-case.
+Three controllers write a model directly and then call `GraphService.bump_version!`:
+`Admin::EdgesController#update`, `Admin::StationsController#update`, and `Admin::LinesController#update`.
+`GraphPublisher` and `LineDeletion` write inside their own transactions.
 
 ## Concurrency and background work
 
 | Concern | Mechanism |
 |:--|:--|
-| Web | Puma, `config/puma.rb` |
-| Background jobs | Sidekiq, `worker` process in the `Procfile` |
+| Web | Puma (`render.yaml` names `config/puma.rb`, which is not in the repository) |
+| Background jobs | Sidekiq is installed and the `Procfile` has a `worker`. The repository has no job class and no `config/sidekiq.yml`. |
 | Cache | `Rails.cache` → Redis via `REDIS_URL` |
 | Rate limiting | rack-attack |
 
 Redis is treated as **optional**. `bust_graph_cache!` rescues every error, so an unset or
 unreachable `REDIS_URL` degrades to "cache entries expire on their TTL" rather than failing
-requests. See [Backend Internals → Caching]({{ site.baseurl }}/backend#caching).
+requests. See [Backend Internals → Caching](backend.md#caching).

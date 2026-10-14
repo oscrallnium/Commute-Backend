@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 30) do
+ActiveRecord::Schema[7.2].define(version: 32) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -201,7 +201,7 @@ ActiveRecord::Schema[7.2].define(version: 30) do
     t.datetime "updated_at", null: false
     t.index ["station_id", "direction"], name: "index_station_access_points_on_station_id_and_direction"
     t.index ["station_id"], name: "index_station_access_points_on_station_id"
-    t.check_constraint "direction IS NULL OR (direction::text = ANY (ARRAY['northbound'::character varying::text, 'southbound'::character varying::text]))", name: "station_access_points_direction_check"
+    t.check_constraint "direction IS NULL OR (direction::text = ANY (ARRAY['northbound'::character varying::text, 'southbound'::character varying::text, 'eastbound'::character varying::text, 'westbound'::character varying::text, 'inbound'::character varying::text, 'outbound'::character varying::text]))", name: "station_access_points_direction_check"
     t.check_constraint "kind::text = ANY (ARRAY['entrance'::character varying::text, 'exit'::character varying::text, 'both'::character varying::text])", name: "station_access_points_kind_check"
     t.check_constraint "lat >= '-90'::integer::numeric AND lat <= 90::numeric AND lng >= '-180'::integer::numeric AND lng <= 180::numeric", name: "station_access_points_coords_check"
   end

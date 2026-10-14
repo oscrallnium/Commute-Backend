@@ -1,14 +1,6 @@
----
-title: Backend Internals
-layout: default
-nav_order: 5
----
-
 # Backend Internals
-{: .no_toc }
 
-1. TOC
-{:toc}
+Last checked against commit `106ae55` on 10/13/26.
 
 ---
 
@@ -16,218 +8,112 @@ nav_order: 5
 
 | Concern | Choice |
 |:--|:--|
-| Language / framework | Ruby 3.4 · Rails 7.1, `--api` mode |
+| Language and framework | Ruby 3.4, Rails 7.2.3 (the Gemfile allows `~> 7.1`), API mode |
 | Server | Puma |
-| Database | Postgres (Supabase), `pg_trgm` for fuzzy station search |
-| Auth | Devise + devise-jwt, JTIMatcher revocation |
-| Cache | Redis via `Rails.cache` |
-| Jobs | Sidekiq (`worker` in the Procfile) |
-| Rate limiting | rack-attack |
+| Database | Postgres (Supabase). `pg_trgm` supports station search. |
+| Auth | Devise 5.0.4 and devise-jwt 0.13.0, `JTIMatcher` revocation |
+| Cache | `Rails.cache`: Redis in production, memory in development and staging, null in test |
+| Jobs | Sidekiq is installed. The repository has no job class and no `config/sidekiq.yml`. |
+| Rate limiting | rack-attack 6.8.0 |
 | CORS | rack-cors, origins from `ALLOWED_ORIGINS` |
-| Object storage | Active Storage → Supabase S3-compatible |
-| Serialization | hand-rolled `as_api_json` on models + `GraphService` |
-| Tests | RSpec request + service specs |
+| Object storage | Active Storage to Supabase S3-compatible storage |
+| Pagination | Pagy 6.5.0 (used by `GET /api/v1/ar_world_maps` only) |
+| Serialization | `as_api_json` on models, and `GraphService` for the graph |
+| Tests | RSpec: request, service, model, and migration specs |
 
 ## Layout
 
 ```
 app/
 ├── controllers/
+│   ├── application_controller.rb   error rescues, paginate_meta
 │   ├── health_controller.rb
 │   └── api/v1/
-│       ├── base_controller.rb        auth · json_response · error_response · cache busting
-│       ├── graph_controller.rb       GET /graph, /graph/version   (public)
-│       ├── stations_controller.rb    GET /stations, /stations/:id (public)
-│       ├── routes_controller.rb      GET /routes, /routes/:line_id (public)
-│       ├── saved_routes_controller.rb
-│       ├── incidents_controller.rb
-│       ├── analytics_controller.rb
-│       ├── users_controller.rb
-│       ├── ar_world_maps_controller.rb
+│       ├── base_controller.rb      authenticate_user!, require_admin!, json_response, bust_graph_cache!
+│       ├── graph_controller.rb     GET /graph, /graph/version (public)
+│       ├── stations_controller.rb, routes_controller.rb (public)
+│       ├── saved_routes, incidents, analytics, users, ar_world_maps
 │       ├── auth/{sessions,registrations}_controller.rb
 │       └── admin/
-│           ├── graph_controller.rb    create_route / delete_route
-│           ├── stations_controller.rb create / update / destroy
-│           ├── edges_controller.rb    geometry + directionality
-│           ├── settings_controller.rb enforce_operating_hours
-│           └── analytics_controller.rb summary / hotspots
-├── models/                            15 models
+│           ├── graph_controller.rb          show, publish, create_route, delete_route
+│           ├── graph_versions_controller.rb index, show
+│           ├── stations, edges, lines, settings, analytics
+├── models/                        17 models
 └── services/
-    └── graph_service.rb               Note: 1141 lines — all graph mutation logic
+    ├── graph_service.rb           add_route, delete_route, insert_stop, remove_stop, graph assembly (1200 lines)
+    ├── graph_publisher.rb         one transaction, one version
+    ├── graph_change_validator.rb  shape check of each publish change
+    ├── graph_change_applier.rb    one write for each change type
+    ├── graph_visibility.rb        the visibility rule
+    ├── line_deletion.rb           delete a line that nothing uses
+    └── loop_reslicer.rb           rake task helper
+lib/tasks/                         graph_repair.rake, stations.rake, assets.rake
 ```
 
-## `GraphService`
-
-Every graph mutation goes through it, wrapped in a transaction, and every mutation bumps
-`graph_meta.version`.
+## Services
 
 ```mermaid
 graph TD
-    subgraph pub["Public class methods"]
-        AR["add_route(payload)"]
-        DR["delete_route(line_id)"]
-        IS["insert_stop(payload)"]
-        RS["remove_stop(station_id)"]
-        AG["assemble_graph"]
-        GV["graph_version"]
-        BV["bump_version!"]
-        PD["polyline_distance_km(points)"]
-    end
-    AR --> V["validate(payload)"]
-    V --> NP["normalize_passes"]
-    NP --> TX[("BEGIN TRANSACTION")]
-    TX --> ST["insert stations<br/>{LINE}_STOP1…n"]
-    ST --> ED["insert edges<br/>{LINE}_SEG1…n-1"]
-    ED --> LN["upsert Line row"]
-    LN --> MODE["append lineID to<br/>transport_modes.lines"]
-    MODE --> BUMP["bump graph version"]
-    BUMP --> COMMIT[("COMMIT")]
-    COMMIT --> BUST["bust_graph_cache!"]
-
-    style TX fill:#3a3a6b,color:#fff
-    style COMMIT fill:#1f7a4d,color:#fff
+    C1["Admin::GraphController#publish"] --> GP[GraphPublisher]
+    GP --> GV[GraphChangeValidator]
+    GP --> GA[GraphChangeApplier]
+    GA --> LD[LineDeletion]
+    C2["Admin::GraphController#create_route / delete_route"] --> GS[GraphService]
+    C3["Admin::StationsController#create / destroy"] --> GS
+    C4["Graph / Admin::Graph #show"] --> GS
+    GS --> GVIS[GraphVisibility]
+    GP --> GS
+    GS --> PG[(Postgres)]
 ```
 
-### `assemble_graph`
+| Service | Public entry | What it does |
+|:--|:--|:--|
+| `GraphService` | `.add_route`, `.delete_route`, `.insert_stop`, `.remove_stop`, `.assemble_graph`, `.assemble_admin_graph`, `.graph_version`, `.bump_version!`, `.polyline_distance_km` | Authors and assembles the graph. Each write runs in a transaction and raises the version. |
+| `GraphPublisher` | `.publish(base_version:, changes:, user:)` | Validates, locks `graph_meta`, compares the version, applies all changes, raises the version once, writes `graph_versions`. |
+| `GraphChangeValidator` | `#call` | Checks shape and values. Returns clean changes and every error. Makes no database read. |
+| `GraphChangeApplier` | `#apply(change)` | Writes one change. Raises `Rejected` for a missing row or a broken rule. |
+| `GraphVisibility` | `#station_visible?`, `#edge_visible?`, `#line_visible?`, `#line_id_visible?`, `#station_id_visible?` | The visibility rule. |
+| `LineDeletion` | `.call(line_id)`, `.delete!(line_id)` | Deletes a line with no stop and no edge. Removes its fare rows and mode entry. |
 
-Builds the client-facing document. Two details matter:
+### `GraphService#add_route`
 
-- `Station.includes(:access_points)` — without the preload this is one query per station on a
-  payload that already assembles the whole graph in one request.
-- Output keys are **camelCase**, unlike every other endpoint.
+`validate` checks the payload. `normalize_passes` turns the flat shape and the `passes` shape into one list. The transaction then:
 
-### Validation
+1. Locks the `lines` row (`lock_line!`) and reads `last_stop_number`.
+2. Builds stops (`<CHAIN>_S<n>`) and edges (`<FROM>__<TO>`).
+3. Upserts stations and edges.
+4. Appends the line ID to `transport_modes.lines`.
+5. Updates the `lines` row.
+6. Raises the graph version.
 
-`LINE_ID_RE` permits uppercase letters, digits, underscores and dots — e.g.
-`STACRUZ.LRT_BUENDIA`. Errors come back as a `{ field:, message: }` array.
+Travel time: a road edge of 5 km or more runs at 45 km/h. A shorter edge uses 22 km/h (bus), 16 km/h (jeepney), 15 km/h (tricycle), or 30 km/h (train). The minimum is 2 minutes.
 
-| Check | Message |
+### `insert_stop` and `remove_stop`
+
+| Rule | Reason |
 |:--|:--|
-| `displayName` blank | "Display name is required."|
-| `lineID` blank | "Line ID is required."|
-| `lineID` contains a space | "Line ID must not contain spaces."|
-| `lineID` fails `LINE_ID_RE` | "Line ID must only contain uppercase letters, digits, underscores, and dots."|
-| `lineID` already has stations | *conditional* — see below |
-| `mode` not in `transport_modes` | invalid mode |
-| fewer than 2 stops | at least 2 required |
-| `crowdFactor` / `reliability` outside 0–1 | range error |
+| Refuse a stop with `type` `train`. | MRT and LRT stops serve both directions. |
+| Accept a stop whose ID ends in `_S<n>` or `_STOP<n>` only. | The chain comes from the ID prefix. |
+| A closed loop works. The closing edge is an ordinary segment. | The code wraps around the loop. |
+| Refuse a remove when the chain has 2 stops or fewer. | A route needs 2 stops. Delete the route. |
 
-An existing `lineID` is **not** an automatic rejection: it is also the path for adding the missing
-northbound/southbound direction to a route that already has the other one.
-`existing_line_append_error` decides which case it actually is.
-
-### Multi-pass payloads
-
-`normalize_passes` accepts both the legacy flat `stops:` array and the multi-pass shape used by
-the iOS Loop Creator:
-
-```jsonc
-{
-  "passes": [
-    { "direction": "northbound", "stops": [… ], "closesLoop": false },
-    { "direction": "southbound", "stops": [… ], "closesLoop": true,
-      "closingPolyline": [{ "lat": …, "lng": … } ] }
-  ]
-}
-```
-
-### `insert_stop` / `remove_stop` — deliberately narrow
-
-These renumber a line's `_STOP<n>` / `_SEG<n>` chain, which is only well-defined under strict
-conditions.
-
-```mermaid
-flowchart TD
-    S[Insert or remove a stop] --> R1{mode == train?}
-    R1 -->|yes| X1["No — Refused"]
-    R1 -->|no| R2{"closed loop?<br/>edge_count >= station_count"}
-    R2 -->|yes| X2["No — Refused"]
-    R2 -->|no| R3{"station follows<br/>PREFIX_STOP&lt;n&gt;?"}
-    R3 -->|no| X3["No — Refused"]
-    R3 -->|yes| OK["Yes — Split/merge edges,<br/>renumber, bump version"]
-
-    style X1 fill:#8b2635,color:#fff
-    style X2 fill:#8b2635,color:#fff
-    style X3 fill:#8b2635,color:#fff
-    style OK fill:#1f7a4d,color:#fff
-```
-
-| Rule | Why |
-|:--|:--|
-| Never on `mode == "train"` | MRT/LRT stations are shared by both directions' edges. Splitting one direction's edge leaves the other silently bypassing the change — an asymmetric graph. |
-| Never on a closed loop | The closing edge is real recorded geometry between two specific endpoints; if a terminal shifts there is no principled way to auto-repair it. |
-| Only `<prefix>_STOP<n>` stations | That convention is what makes sequential renumbering well-defined. Hand-authored named stations (trains) don't use it and are excluded by rule 1 anyway. |
-
-**Accepted tradeoff:** renumbering touches `stations` and `edges` only. It does not chase
-station/edge IDs held as strings in `saved_routes`, `route_plan_events`, `ar_world_maps` or
-`incidents` — there is no DB-level FK, so a renumbered ID can leave those dangling. Renumbering
-was chosen over stable IDs (`graph_service.rb:344`).
-
-The two service specs — `spec/services/graph_service_stop_editing_spec.rb` and
-`graph_service_insert_stop_polyline_spec.rb` — encode these rules and are the first thing to read
-before touching this code.
+Both methods change `stations.sequence` and line edges. They never rename a stop or an edge. A retry of an insert returns the stop that already exists (same name within 5 m).
+Specs: `spec/services/graph_service_stop_editing_spec.rb`, `graph_service_loop_stop_editing_spec.rb`, `graph_service_insert_stop_polyline_spec.rb`, `graph_service_insert_stop_retry_spec.rb`.
 
 ## Auth
 
-```mermaid
-sequenceDiagram
-    participant iOS
-    participant Devise
-    participant DB
-
-    iOS->>Devise: POST /auth/sign_in {user:{email,password}}
-    Devise->>DB: authenticate (bcrypt)
-    DB-->>Devise: user (jti: abc-123)
-    Devise-->>iOS: { data: { token, user } }
-
-    iOS->>Devise: any request + Authorization: Bearer <jwt>
-    Devise->>DB: JTIMatcher — jwt.jti == user.jti?
-    alt match
-        DB-->>iOS: 200
-    else revoked
-        DB-->>iOS: 401 → client signs out
-    end
-
-    iOS->>Devise: POST /api/v1/auth/refresh
-    Devise->>DB: update_column(:jti, SecureRandom.uuid)
-    Note over Devise: the token used to make<br/>this call is now dead
-    Devise-->>iOS: { data: { token: <new>, user } }
-```
-
-Revocation is **JTIMatcher** — one live token per user. Refresh rotates the JTI, so the previous
-token dies immediately.
-
-`update_column` writes through to the in-memory attribute, so the `UserEncoder.call` on the next
-line signs the **new** JTI. A detail that would silently mint dead tokens if it didn't.
-
-Public endpoints call `skip_before_action :authenticate_user!` — currently `graph`, `stations`,
-`routes` and `health`.
+See [Security](security.md#authentication) for the token lifetime, revocation, and refresh flow.
 
 ## Caching
 
 | Key | TTL | Busted by |
 |:--|:--|:--|
-| `full_graph` | 5 min | `bust_graph_cache!` on any admin write |
-| `graph_version` | 30 s | same |
-| `routes_index` | 30 min | pattern bust |
-| `stations/<line>/<type>/<interchange>/<search>` | 1 hour | pattern bust |
+| `full_graph` | 5 min | `bust_graph_cache!` |
+| `graph_version` | 30 s | `bust_graph_cache!` |
+| `routes_index` | 30 min | Nothing. Migrations 022 to 026 delete it. |
+| `stations/<line>/<type>/<interchange>/<search>` | 1 h | `bust_graph_cache!(extra_pattern: "stations*")` from station writes and publish |
 
-`bust_graph_cache!` (`base_controller.rb:40`) rescues everything and logs:
-
-```ruby
-def bust_graph_cache!(extra_pattern: nil)
-  Rails.cache.delete_matched(extra_pattern) if extra_pattern
-  Rails.cache.delete("full_graph")
-  Rails.cache.delete("graph_version")
-rescue => e
-  Rails.logger.error("[cache] bust_graph_cache! failed: #{e.class}: #{e.message}")
-end
-```
-
-This is a fix for a live bug. Every admin write called `Rails.cache.delete` unprotected *after*
-the DB transaction had already committed, so a Redis blip surfaced as a raw 500 to the client even
-though the write had succeeded. Worst case now is briefly stale cache until the TTL expires —
-much better than a false failure.
+`bust_graph_cache!` rescues every error and logs it. A cache failure cannot turn a committed write into a failed response. The worst case is stale data until the TTL ends.
 
 ## Deployment
 
@@ -241,66 +127,69 @@ startCommand:     bundle exec puma -C config/puma.rb
 healthCheckPath:  /health
 ```
 
-Environment: `DATABASE_URL`, `SECRET_KEY_BASE` (generated), `DEVISE_JWT_SECRET_KEY`, `REDIS_URL`,
-`ALLOWED_ORIGINS`, `SUPABASE_S3_*`, `SUPABASE_STORAGE_BUCKET`,
-`RAILS_SKIP_ASSET_COMPILATION=true`.
+Environment variable keys: `DATABASE_URL`, `SECRET_KEY_BASE`, `DEVISE_JWT_SECRET_KEY`, `REDIS_URL`, `ALLOWED_ORIGINS`, `HONO_API_URL` (unused), `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_DEV_PASSWORD`, `SUPABASE_S3_*`, `SUPABASE_STORAGE_BUCKET`, `RAILS_SKIP_ASSET_COMPILATION`.
 
-{: .warning }
-> **Seeds never run on deploy.** The pipeline runs `db:migrate` only. Anything the app requires to
-> *function* must live in a migration, not `seeds.rb`. Production shipped with an empty
-> `graph_meta` and no admin user until migration 011 fixed it.
+> **Warning:** Seeds do not run on deploy. The pipeline runs `db:migrate` only. Put data that the app needs in a migration.
 
-{: .note }
-> **The `starter` plan spins down on idle** — a cold request takes roughly 44 seconds. First
-> launch after a quiet period looks like a hang. Worth remembering before debugging a "network
-> bug" that is just a cold dyno.
+> **Note:** The `starter` plan stops the service when idle. A cold request takes about 44 seconds.
+
+The repository also has `railway.toml` and a Procfile. Render does not use them.
 
 ## Local development
 
 ```bash
 bundle install
 bin/rails db:create db:migrate
-bin/rails server                 # → http://localhost:3000
-
-bundle exec rspec
-bundle exec rubocop
+bin/rails server            # http://localhost:3000
+bundle exec rspec           # use a disposable database
 ```
 
-`.env` (via `dotenv-rails`, development/test only):
-
-```
-DATABASE_URL=postgres://localhost/commutebeh_development
-DEVISE_JWT_SECRET_KEY=<any long random string>
-REDIS_URL=redis://localhost:6379/0     # optional — cache degrades gracefully
-ALLOWED_ORIGINS=http://localhost:3000
-```
-
-To point the iOS client at a local server, swap the commented line in
-`Gora/Networking/APIConfig.swift`.
+Set `DATABASE_URL`, `DEVISE_JWT_SECRET_KEY`, and optionally `REDIS_URL` and `ALLOWED_ORIGINS` in `.env`. See [Agent Guide](agent-guide.md#run-the-specs-safely) before you run the specs.
 
 ## Migration history
 
-Read this as a changelog of the data model.
-
-| # | What it did |
+| # | Purpose |
 |:--|:--|
-| 001–008 | extensions, users, saved routes, AR maps, route plan events, incidents, Active Storage, trigram search indexes |
-| 009 | **graph tables** — `graph_meta`, `transport_modes`, `payment_methods`, `peak_hour_config`, `fare_matrix`, `stations`, `edges` |
+| 001 to 008 | Extensions, users, saved routes, AR maps, route plan events, incidents, Active Storage, trigram indexes |
+| 009 | Graph tables: `graph_meta`, `transport_modes`, `payment_methods`, `peak_hour_config`, `fare_matrix`, `stations`, `edges` |
 | 010, 012 | `enforce_operating_hours` on `graph_meta` |
-| 011 | bootstrap admin user + `GraphMeta` row |
-| 013, 015 | `is_road_snapped` on edges + backfill for dense polylines |
-| 014 | real primary keys on graph tables |
-| 016 | corrected rail station coordinates |
-| 017 | `station_access_points` (station doors) |
-| 018, 019 | `lines` table + version bump so clients re-sync |
+| 011 | Bootstrap admin users and the `graph_meta` row |
+| 013, 015 | `is_road_snapped` on edges, and a backfill |
+| 014 | Primary keys on graph tables |
+| 016 | Corrected rail station coordinates |
+| 017, 020 | `station_access_points`, and a deferred foreign key |
+| 018, 019 | `lines` table, and a version bump |
+| 021 | `stations.sequence` and `lines.last_stop_number` |
+| 022 | Renamed lines (`MRT-3` to `MRT3`, `EDSA_BUS` to `EDSA_CAROUSEL`, and others) |
+| 023, 024 | Recalculated road edge times |
+| 025 | `lines.color_hex` |
+| 026 | `stations.boarding` |
+| 027 | `enabled` and `disabled_reason` on lines, stations, edges |
+| 028 | `lines.base_km` and `lines.direction` |
+| 029 | `rail_fare_tables` |
+| 030 | `graph_versions` |
 
-Doors and named lines are recent additions, which is why the client decodes both defensively.
+## Known issues
 
-## Known gaps
+Found by reading the code at commit `106ae55`. "Not verified" means the issue needs a run time or live data check.
 
-| Item | Detail |
-|:--|:--|
-| `places` / `events` routes | Declared at `config/routes.rb:58` with **no controllers**. Requests raise rather than 404. |
-| `graph_service.rb` size | 1141 lines holding all mutation logic. Splitting by operation is the obvious refactor. |
-| Root `README.md` / `CLAUDE.md` | Describe a Hono proxy at `:3001` that does not exist. |
-| Orphaned IDs | Stop renumbering can dangle `saved_routes` / `route_plan_events` references — see above. |
+| # | Issue | Where | Effect |
+|:--|:--|:--|:--|
+| 1 | `paginate_meta` calls `pagy.limit`. Pagy 6.5.0 has `items`, not `limit`. | `app/controllers/application_controller.rb:33`, used at `ar_world_maps_controller.rb:15` | `GET /api/v1/ar_world_maps` raises `NoMethodError` (500). No spec covers it. |
+| 2 | Routes without a controller: `places`, `events`, `admin/users`, `admin/ar_world_maps`, `admin/incidents`. | `config/routes.rb:59-60` and `64-66` | A request raises a routing error. |
+| 3 | Six INTERCHANGE edges point to stations that do not exist. | Data. Source: the ops note of 10/12/26. | The public graph leaves them out. The admin graph lists them. Not verified (no database access). |
+| 4 | Seven empty lines from migration 018 have no stops. | Data. `db/migrate/018_create_lines.rb:35-52` (the file names `EJEEPNEY_BGC` as one) | Empty lines show in the admin graph. Not verified (no database access). |
+| 5 | Public `GET /stations`, `/stations/:id`, `/routes`, `/routes/:line_id` ignore `enabled`. | `stations_controller.rb:10-16`, `routes_controller.rb:9-55` | Hidden stops and lines still show in these responses. |
+| 6 | The `routes_index` cache is never deleted by a write. | `routes_controller.rb:9`, `base_controller.rb:41-47` | `stop_count` and fares stay stale for up to 30 minutes. |
+| 7 | `PATCH /admin/settings` does not raise the graph version. | `admin/settings_controller.rb:17-21` | The graph JSON carries `enforceOperatingHours`. A client with the same version does not re-download. |
+| 8 | Account delete fails for a user who has `route_plan_events`. The foreign key has no `ON DELETE`, and `User` has no `dependent` for it. | `db/schema.rb` (`add_foreign_key "route_plan_events", "users"`), `app/models/user.rb:11-12` | `DELETE /api/v1/auth/account` returns 500. Not verified at run time. |
+| 9 | `POST /api/v1/incidents` with an unknown `category` raises `ArgumentError`. | `incidents_controller.rb:12`, `models/incident.rb:4` | 500 instead of 422. |
+| 10 | `ArWorldMap#as_api_json(include_url: true)` calls `rails_blob_url` with `only_path: false`. No default host is set. | `models/ar_world_map.rb:24`, `config/` | `GET /api/v1/ar_world_maps/:id` can raise for a map with a file. Not verified. |
+| 11 | `config/puma.rb` and `config/sidekiq.yml` are not in the repository. | `render.yaml:9`, `Procfile:1-2` | Start command names a missing file. Not verified how Render starts. |
+| 12 | `PATCH /admin/stations/:id` does not validate `lat`, `lng`, `open_time`, or `close_time`. | `admin/stations_controller.rb:109-125` | A bad number stores as `0.0`. Bad hours store as text. |
+| 13 | `PATCH /admin/edges/:id` accepts any `direction` string. | `admin/edges_controller.rb:66-84` | A wrong label can enter the graph. |
+| 14 | `CLAUDE.md`, `README.md`, `.env.example`, `railway.toml`, and `render.yaml` still name the Hono service, Koyeb, or Railway. | Repository root | Misleads readers. No code reads `HONO_API_URL`. |
+| 15 | `graph_service.rb` is 1200 lines. | `app/services/graph_service.rb` | Over the 500-line limit of the project style. |
+| 16 | `GraphService` uses string interpolation in two `update_all` calls. | `graph_service.rb:272`, `326` | See [Security](security.md#sql-safety). |
+
+See also the gaps in [Security](security.md#known-gaps).

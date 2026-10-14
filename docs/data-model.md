@@ -1,14 +1,6 @@
----
-title: Data Model
-layout: default
-nav_order: 4
----
-
 # Data Model
-{: .no_toc }
 
-1. TOC
-{:toc}
+Last checked against commit `106ae55` on 10/13/26.
 
 ---
 
@@ -33,6 +25,8 @@ erDiagram
     LINES }o--|| TRANSPORT_MODES : mode
     TRANSPORT_MODES ||--o{ PAYMENT_METHODS : accepts
     LINES ||--o| FARE_MATRIX : "fare rules"
+    LINES ||--o| RAIL_FARE_TABLES : "rail fares"
+    USERS ||--o{ GRAPH_VERSIONS : publishes
     USERS ||--o{ SAVED_ROUTES : saves
     USERS ||--o{ ROUTE_PLAN_EVENTS : generates
     USERS ||--o{ AR_WORLD_MAPS : uploads
@@ -47,7 +41,7 @@ erDiagram
         bool enforce_operating_hours
     }
     STATIONS {
-        string station_id PK "TEXT — e.g. MRT_NORTH_AVE"
+        string station_id PK "TEXT, for example MRT_NORTH_AVE"
         string name
         string short_name
         string line FK
@@ -59,6 +53,10 @@ erDiagram
         string_array amenities
         string open_time "HH:mm"
         string close_time "HH:mm"
+        int sequence "travel order in the chain"
+        string boarding "both | alight_only"
+        bool enabled
+        string disabled_reason
     }
     STATION_ACCESS_POINTS {
         string access_point_id PK
@@ -89,6 +87,8 @@ erDiagram
         jsonb polyline_coordinates
         string mk_directions_transport_type
         bool is_road_snapped
+        bool enabled
+        string disabled_reason
     }
     TRANSPORT_MODES {
         string id PK "train | bus | jeepney | tricycle | walk"
@@ -113,8 +113,27 @@ erDiagram
         string_array accepted_by_modes
     }
     LINES {
-        string id PK "MRT-3 | UPLB_KANAN | …"
+        string id PK "MRT3 | UPLB_KANAN | INTERCHANGE"
         string display_name
+        string mode
+        int last_stop_number "counter for generated stop IDs"
+        string color_hex "nullable"
+        bool enabled
+        string disabled_reason
+        decimal base_km "free distance of the road fare"
+        string direction "both | one_way"
+    }
+    RAIL_FARE_TABLES {
+        string line_id PK
+        jsonb station_ids
+        jsonb fares "fares[i][j] is the fare from station i to station j"
+    }
+    GRAPH_VERSIONS {
+        int version UK
+        datetime published_at
+        uuid published_by_id FK "null on user delete"
+        jsonb change_list
+        int change_count
     }
     FARE_MATRIX {
         string line_name PK
@@ -164,20 +183,19 @@ part of the data contract with the client and appears in URLs, saved routes and 
 
 Consequences:
 
-- Models declare `self.primary_key` explicitly — `app/models/station.rb:2`.
+- Models declare `self.primary_key` explicitly, for example `app/models/station.rb:2`.
 - `Station` and `Edge` set `self.inheritance_column = nil`, because both have a real `type` column
   that has nothing to do with STI. Forgetting this raises `SubclassNotFound` — it has already
   broken a migration once (`0c708ca`).
 - IDs can contain dots, hence the `GRAPH_ID` router constraint.
 
-{: .warning }
-> There is **no DB-level FK** from `saved_routes`, `route_plan_events`, `ar_world_maps` or
-> `incidents` to a station ID. Stop renumbering can therefore orphan those references — an
-> accepted tradeoff documented at `app/services/graph_service.rb:344`.
+> **Warning:** There is **no DB-level FK** from `saved_routes`, `route_plan_events`, `ar_world_maps` or
+> `incidents` to a station ID. These tables store IDs only. A stop ID never
+> changes, because insert and remove change `sequence` only. A deleted stop leaves its references dangling.
 
 ## The JSON document
 
-`GET /api/v1/graph` returns this shape, assembled at `app/services/graph_service.rb:626`:
+`GET /api/v1/graph` returns this shape, assembled by `GraphService#assemble_graph`:
 
 ```jsonc
 {
@@ -192,14 +210,16 @@ Consequences:
   },
   "transportModes": { "train": { … }, "walk": { … } },
   "paymentMethods": { "cash": { … } },
-  "lines":          { "MRT-3": { "id": "MRT-3", "displayName": "MRT-3"} },
+  "lines":          { "MRT3": { "id": "MRT3", "displayName": "MRT-3", "mode": "train",
+                                "lastStopNumber": 0, "baseKm": 0.0 } },
   "peakHourMultipliers": {
     "morningPeak": { "startHour": 6, "endHour": 9, "multiplier": 1.4,
                      "appliesTo": ["bus", "jeepney"] },
     "eveningPeak": { … },
     "trainPeak":   { … }
   },
-  "fareMatrix": { "MRT-3": { … } },
+  "fareMatrix": { "MRT3": { … } },
+  "railFareTables": { "MRT3": { "stationIds": […], "fares": [[null, 13.0], [13.0, null]] } },
   "stations": [… ],
   "edges":    [… ]
 }
@@ -212,15 +232,16 @@ Consequences:
 | The graph document | **camelCase** | `GraphService#station_json` / `#edge_json` |
 | Every other endpoint | **snake_case** | `Model#as_api_json` |
 
+These public graph keys appear only when set: `station.sequence`, `station.accessPoints`, `station.boarding` (only when not `both`), `edge.direction`, `line.colorHex`. The ops fields are in the [Ops Publish API](ops-publish-api.md#fields-that-only-the-admin-graph-has).
+
 Both are live simultaneously. The client decodes the graph with a plain `JSONDecoder` and
 everything else with `.convertFromSnakeCase`. Check which side of the line you're on before
 adding a field.
 
-{: .important }
-> A field must be added to **both** serialisers or it silently vanishes on OTA sync. This has
+> **Important:** A field must be added to **both** serialisers or it silently vanishes on OTA sync. This has
 > already happened: `interchangesWith` exists in the iOS `Station` model and in the original
 > bundled graph but is emitted by neither serialiser, so every sync nils it out and the client
-> patches around it. The comment at `app/models/station.rb:31` exists to stop access points
+> patches around it. The comment in `app/models/station.rb` (`as_api_json`) exists to stop access points
 > repeating that mistake.
 
 ### Client decoding tolerances
@@ -232,10 +253,11 @@ schema addition:
 |:--|:--|:--|
 | `version` | `Int` **or** `String` | Server emits Int; the client's local re-encode emits String |
 | `lines` | missing → `{}` | Added after the first shipped graphs |
+| `railFareTables`, `lines[*].baseKm` | ignored by the current app | Added with the ops fields |
 | `enforceOperatingHours` | missing → `true` | Backwards-compatible default |
 
 Add new graph fields the same way. See
-[Graph Sync → Schema evolution]({{ site.baseurl }}/graph-sync#schema-evolution-rules).
+[Graph Sync → Schema evolution](graph-sync.md#schema-evolution-rules).
 
 ## Invariants
 

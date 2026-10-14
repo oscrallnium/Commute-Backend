@@ -32,7 +32,7 @@ RSpec.describe "GraphService stable ids and stop sequence" do
 
   def order_of(line_id) = Station.where(line: line_id).order(:sequence).pluck(:station_id)
 
-  after { %w[STBL STBLOOP STBLEG STBLRM OLD.STBL_LINE].each { |l| GraphService.delete_route(l) } }
+  after { %w[STBL STBLOOP STBLEG STBLRM OLD.STBL_LINE STBLEW STBLUV].each { |l| GraphService.delete_route(l) } }
 
   describe "add_route" do
     it "creates _S<n> stations with sequence and <from>__<to> edges for a directional pass" do
@@ -145,6 +145,67 @@ RSpec.describe "GraphService stable ids and stop sequence" do
 
       expect(result.data[:station_id]).to eq("STBLRM_S5")
       expect(Line.find("STBLRM").last_stop_number).to eq(5)
+    end
+  end
+
+  describe "east and west passes" do
+    it "creates EB and WB chains that share the per-line counter" do
+      create_route("STBLEW", { "direction" => "eastbound", "stops" => stops })
+      create_route("STBLEW", { "direction" => "westbound", "stops" => stops })
+
+      expect(order_of("STBLEW")).to match_array(
+        %w[STBLEW_EB_S1 STBLEW_EB_S2 STBLEW_EB_S3 STBLEW_EB_S4
+           STBLEW_WB_S5 STBLEW_WB_S6 STBLEW_WB_S7 STBLEW_WB_S8]
+      )
+      expect(Edge.where(line: "STBLEW", direction: "eastbound").count).to eq(3)
+      expect(Edge.where(line: "STBLEW", direction: "westbound").count).to eq(3)
+      expect(Edge.where(line: "STBLEW").pluck(:bidirectional)).to all(be false)
+    end
+
+    it "creates both chains in one call" do
+      passes = [{ "direction" => "eastbound", "stops" => stops }, { "direction" => "westbound", "stops" => stops }]
+      result = GraphService.add_route(payload("STBLEW", nil).merge("passes" => passes))
+
+      expect(result.success?).to be true
+      expect(Station.where(line: "STBLEW").pluck(:station_id)).to include("STBLEW_EB_S1", "STBLEW_WB_S5")
+    end
+
+    it "rejects an unknown direction and lists the accepted ones" do
+      result = GraphService.add_route(payload("STBLEW", { "direction" => "east", "stops" => stops }))
+
+      expect(result.success?).to be false
+      message = result.errors.find { |e| e[:field] == "passes[0].direction" }[:message]
+      expect(message).to include("northbound", "southbound", "eastbound", "westbound", "inbound", "outbound")
+    end
+
+    it "rejects the same direction twice in one call" do
+      passes = [{ "direction" => "eastbound", "stops" => stops }, { "direction" => "eastbound", "stops" => stops }]
+      result = GraphService.add_route(payload("STBLEW", nil).merge("passes" => passes))
+
+      expect(result.success?).to be false
+      expect(result.errors.map { |e| e[:message] }).to include(/Direction 'eastbound' was submitted more than once/)
+    end
+
+    it "rejects a second eastbound pass on an existing line" do
+      create_route("STBLEW", { "direction" => "eastbound", "stops" => stops })
+      result = GraphService.add_route(payload("STBLEW", { "direction" => "eastbound", "stops" => stops }))
+
+      expect(result.success?).to be false
+      expect(result.errors.first[:message]).to eq("Eastbound already exists for 'STBLEW'.")
+    end
+  end
+
+  describe "the uv_express mode" do
+    it "accepts a route in that mode" do
+      TransportMode.find_or_create_by!(id: "uv_express") do |m|
+        m.display_name = "UV Express"
+        m.mk_directions_type = "automobile"
+      end
+      result = GraphService.add_route(payload("STBLUV", { "direction" => "eastbound", "stops" => stops })
+                                        .merge("mode" => "uv_express"))
+
+      expect(result.success?).to be true
+      expect(Edge.where(line: "STBLUV").pluck(:mk_directions_transport_type).uniq).to eq(["automobile"])
     end
   end
 

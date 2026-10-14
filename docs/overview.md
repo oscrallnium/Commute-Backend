@@ -1,14 +1,6 @@
----
-title: Overview
-layout: default
-nav_order: 2
----
-
 # Overview
-{: .no_toc }
 
-1. TOC
-{:toc}
+Last checked against commit `106ae55` on 10/13/26.
 
 ---
 
@@ -70,25 +62,27 @@ graph LR
     A --> A2[Insert / remove stops]
     A --> A3[Edit stations, doors, geometry]
     A --> A4[Toggle graph settings]
-    A --> A5[Moderate incidents & AR maps]
+    A --> A5[Publish a draft of edits]
 
     style C fill:#2d6cdf,color:#fff
     style A fill:#b8501e,color:#fff
 ```
 
-Role is the `users.role` enum — `commuter: 0`, `admin: 1`. `require_admin!` in `BaseController`
-gates the entire `/api/v1/admin` namespace with a 403.
+Role is the `users.role` enum: `commuter` (0) and `admin` (1). Each admin controller declares
+`before_action :require_admin!`, which returns 403 for a user who is not an admin. See [Security](security.md#roles-and-admin-access).
 
 ## Glossary
 
 | Term | Meaning |
 |:--|:--|
-| **Station** | A node in the graph. Not necessarily a rail station — a jeepney stop is a station. TEXT primary key, e.g. `MRT_NORTH_AVE`, `UPLB_KANAN_STOP3`. |
+| **Station** | A node in the graph. Not necessarily a rail station — a jeepney stop is a station. TEXT primary key, e.g. `MRT_NORTH_AVE`, `UPLB_KANAN_S3`. |
 | **Edge** | A directed ride between two stations on one line. May be `bidirectional`, in which case the client synthesises the reverse at load time. |
-| **Line** | A named service — `MRT-3`, `EDSA_BUS`, `UPLB_KANAN`. Groups stations and edges. |
+| **Line** | A named service, for example `MRT3`, `EDSA_CAROUSEL`, `UPLB_KANAN`. Groups stations and edges. Has a row in `lines`. |
 | **Mode** | `train`, `bus`, `jeepney`, `tricycle`, `walk`. Defined as data in `transport_modes`, never hardcoded. |
 | **Access point / door** | A specific entrance or exit of a station, with its own coordinates, so walks are measured to the door a passenger actually uses. |
-| **Graph version** | Integer on `graph_meta`, bumped on every mutation. Drives the client's OTA sync. |
+| **Graph version** | Integer on `graph_meta`. Most graph writes raise it. Drives the client's OTA sync. |
+| **Draft and publish** | The ops dashboard keeps edits in a local draft. `POST /api/v1/admin/graph/publish` applies them as one graph version. |
+| **Hidden from riders** | A disabled line, stop, or edge. The public graph leaves it out. The admin graph lists it. |
 | **Pass** | One direction of a recorded route. A two-pass submission becomes northbound + southbound edge sets on one `lineID`. |
 
 ## Reserved line identifiers
@@ -106,6 +100,6 @@ they change how the client treats an edge:
 The product is **Gora**, and the iOS project, target and bundle ID (`com.banaueinc.gora`) now
 all match it.
 
-The old name **CommuteBeh** survives on the server side: this repository is `Commute-Backend`,
-its app directory is `commutebeh-rails`, and the bootstrap admin account is
-`admin@commutebeh.ph`. Expect the old name in infrastructure, not in the client.
+The old name **CommuteBeh** survives on the server side. This repository is `Commute-Backend`, its app
+directory is `commutebeh-rails`, and the bootstrap accounts use the old domain. Expect the old name in
+infrastructure, not in the client.
