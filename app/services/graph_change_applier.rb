@@ -36,6 +36,7 @@ class GraphChangeApplier
   # The line direction also sets `bidirectional` on every edge of the line.
   def apply_line_direction(c)
     line = line_for(c)
+    refuse_service_area!(line, "It has no direction.")
     both = c["direction"] == "both"
     if both && Edge.where(line: line.id).where.not(direction: nil).exists?
       raise Rejected.new("Line '#{line.id}' has edges with a compass direction. Those edges cannot run both ways.",
@@ -48,6 +49,7 @@ class GraphChangeApplier
 
   def apply_line_road_fare(c)
     line = line_for(c)
+    refuse_service_area!(line, "Use service_area_fare.")
     if NO_ROAD_FARE_MODES.include?(line.mode)
       raise Rejected.new("Line '#{line.id}' is a #{line.mode} line. It has no road fare.", field: "line_id")
     end
@@ -81,6 +83,12 @@ class GraphChangeApplier
     raise Rejected.new(e.message, field: "line_id")
   end
 
+  def refuse_service_area!(line, advice)
+    return unless line.service_area
+
+    raise Rejected.new("Line '#{line.id}' is a service area. #{advice}", field: "line_id")
+  end
+
   def line_for(c)
     line = Line.find_by(id: c["line_id"])
     raise Rejected.new("Line '#{c["line_id"]}' was not found.", field: "line_id") unless line
@@ -90,6 +98,15 @@ class GraphChangeApplier
 
     line
   end
+
+  # ── Service areas ──
+
+  def apply_service_area_add(c)             = ServiceAreaWriter.new.add(c)
+  def apply_service_area_boundary(c)        = ServiceAreaWriter.new.update_boundary(c)
+  def apply_service_area_fare(c)            = ServiceAreaWriter.new.update_fare(c)
+  def apply_service_area_timing(c)          = ServiceAreaWriter.new.update_timing(c)
+  def apply_service_area_terminal_add(c)    = ServiceAreaWriter.new.add_terminal(c)
+  def apply_service_area_terminal_delete(c) = ServiceAreaWriter.new.delete_terminal(c)
 
   # ── Stops ──
 
@@ -185,7 +202,7 @@ class GraphChangeApplier
   def apply_transfer_delete(c)
     edge = transfer_for(c)
     edge.delete
-    [edge.from_station, edge.to_station].each { |id| refresh_interchange_flag(id) }
+    [edge.from_station, edge.to_station].each { |id| ServiceAreaWriter.refresh_interchange_flag(id) }
     nil
   end
 
@@ -211,10 +228,5 @@ class GraphChangeApplier
       bidirectional: c.fetch("bidirectional", true), direction: nil,
       polyline_coordinates: c["polyline"], mk_directions_transport_type: "walking", is_road_snapped: false
     }
-  end
-
-  def refresh_interchange_flag(station_id)
-    linked = Edge.where(line: Line::INTERCHANGE_ID).exists?(["from_station = :id OR to_station = :id", id: station_id])
-    Station.where(station_id: station_id).update_all(is_interchange: linked, updated_at: Time.current)
   end
 end

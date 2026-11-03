@@ -14,6 +14,8 @@ class GraphPublisher
     end
   end
 
+  CREATED_ID_FIELDS = { "transfer_add" => "edge_id", "service_area_terminal_add" => "station_id" }.freeze
+
   def self.publish(base_version:, changes:, user:)
     new(base_version: base_version, changes: changes, user: user).publish
   end
@@ -66,7 +68,7 @@ class GraphPublisher
   end
 
   def created_id_field(type)
-    type == "transfer_add" ? "edge_id" : "access_point_id"
+    CREATED_ID_FIELDS.fetch(type, "access_point_id")
   end
 
   def published_json(record)

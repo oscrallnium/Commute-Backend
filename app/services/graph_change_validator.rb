@@ -45,8 +45,31 @@ class GraphChangeValidator
                            optional: { "travel_time_minutes" => :positive, "distance_km" => :non_negative,
                                        "polyline" => :polyline },
                            at_least_one: true },
-    "transfer_delete" => { required: { "edge_id" => :reference_id } }
+    "transfer_delete" => { required: { "edge_id" => :reference_id } },
+    "service_area_add" => { required: { "line_id" => :new_id, "name" => :name, "mode" => :reference_id,
+                                        "boundary" => :boundary, "terminals" => :terminals,
+                                        "base_fare" => :non_negative, "base_km" => :non_negative,
+                                        "fare_per_km" => :non_negative, "accepted_payments" => :payment_ids,
+                                        "open" => :time, "close" => :time },
+                            optional: { "color_hex" => :color, "special_trip_fare" => :optional_non_negative,
+                                        "speed_kmh" => :positive, "detour_factor" => :detour_factor,
+                                        "wait_minutes" => :non_negative } },
+    "service_area_boundary" => { required: { "line_id" => :reference_id, "boundary" => :boundary } },
+    "service_area_fare" => { required: { "line_id" => :reference_id, "base_fare" => :non_negative,
+                                         "base_km" => :non_negative, "fare_per_km" => :non_negative },
+                             optional: { "special_trip_fare" => :optional_non_negative,
+                                         "accepted_payments" => :payment_ids } },
+    "service_area_timing" => { required: { "line_id" => :reference_id },
+                               optional: { "speed_kmh" => :positive, "detour_factor" => :detour_factor,
+                                           "wait_minutes" => :non_negative },
+                               at_least_one: true },
+    "service_area_terminal_add" => { required: { "line_id" => :reference_id, "name" => :name,
+                                                 "lat" => :lat, "lng" => :lng },
+                                     optional: { "short_name" => :short_name } },
+    "service_area_terminal_delete" => { required: { "station_id" => :reference_id } }
   }.freeze
+  MAX_TERMINALS = 20
+  TERMINAL_KEYS = %w[name short_name lat lng].freeze
 
   Error = Struct.new(:index, :type, :field, :message, keyword_init: true) do
     def to_h = super.compact
@@ -241,6 +264,14 @@ class GraphChangeValidator
     number?(value) && value >= 0 ? [value.to_f, nil] : [nil, "must be a number of 0 or more."]
   end
 
+  def clean_optional_non_negative(value)
+    value.nil? ? [nil, nil] : clean_non_negative(value)
+  end
+
+  def clean_detour_factor(value)
+    number?(value) && value >= 1 ? [value.to_f, nil] : [nil, "must be a number of 1 or more."]
+  end
+
   def clean_positive(value)
     number?(value) && value.positive? ? [value.to_f, nil] : [nil, "must be a number greater than 0."]
   end
@@ -279,6 +310,48 @@ class GraphChangeValidator
     else
       [nil, "must be two or more points with a valid lat and lng."]
     end
+  end
+
+  def clean_boundary(value)
+    limits = ServiceArea::MIN_VERTICES..ServiceArea::MAX_VERTICES
+    return [nil, "must list #{limits.begin} to #{limits.end} points."] unless value.is_a?(Array) && limits.cover?(value.length)
+
+    points = value.map { |point| clean_point(point) }
+    points.all? ? [points, nil] : [nil, "must hold only points with a valid lat and lng."]
+  end
+
+  def clean_point(point)
+    return unless point.is_a?(Hash) && clean_lat(point["lat"]).last.nil? && clean_lng(point["lng"]).last.nil?
+
+    { "lat" => point["lat"].to_f, "lng" => point["lng"].to_f }
+  end
+
+  def clean_terminals(value)
+    unless value.is_a?(Array) && (1..MAX_TERMINALS).cover?(value.length)
+      return [nil, "must list 1 to #{MAX_TERMINALS} terminals."]
+    end
+
+    terminals = value.map { |terminal| clean_terminal(terminal) }
+    terminals.all? ? [terminals, nil] : [nil, "must hold only terminals with a name, a lat, and a lng."]
+  end
+
+  def clean_terminal(terminal)
+    return unless terminal.is_a?(Hash) && (terminal.keys - TERMINAL_KEYS).empty?
+
+    name = clean_name(terminal["name"])
+    point = clean_point(terminal.slice("lat", "lng"))
+    short = terminal.key?("short_name") ? clean_short_name(terminal["short_name"]) : [nil, nil]
+    return unless name.last.nil? && point && short.last.nil?
+
+    { "name" => name.first, **point, **(short.first ? { "short_name" => short.first } : {}) }
+  end
+
+  def clean_payment_ids(value)
+    valid = value.is_a?(Array) && value.any? && value.all? { |id| clean_reference_id(id).last.nil? }
+    return [nil, "must list one or more payment method IDs."] unless valid
+    return [nil, "must not list a payment method twice."] unless value.uniq.length == value.length
+
+    [value, nil]
   end
 
   def number?(value)

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 32) do
+ActiveRecord::Schema[7.2].define(version: 34) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -206,6 +206,27 @@ ActiveRecord::Schema[7.2].define(version: 32) do
     t.check_constraint "lat >= '-90'::integer::numeric AND lat <= 90::numeric AND lng >= '-180'::integer::numeric AND lng <= 180::numeric", name: "station_access_points_coords_check"
   end
 
+  create_table "service_areas", primary_key: "line_id", id: :string, force: :cascade do |t|
+    t.jsonb "boundary", default: [], null: false
+    t.decimal "base_fare", precision: 8, scale: 2, default: "0.0", null: false
+    t.decimal "base_km", precision: 6, scale: 2, default: "0.0", null: false
+    t.decimal "fare_per_km", precision: 8, scale: 2, default: "0.0", null: false
+    t.decimal "special_trip_fare", precision: 8, scale: 2
+    t.decimal "speed_kmh", precision: 5, scale: 2, default: "15.0", null: false
+    t.decimal "detour_factor", precision: 4, scale: 2, default: "1.3", null: false
+    t.decimal "wait_minutes", precision: 5, scale: 2, default: "3.0", null: false
+    t.string "accepted_payments", default: [], null: false, array: true
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.check_constraint "base_fare >= 0::numeric", name: "service_areas_base_fare_check"
+    t.check_constraint "base_km >= 0::numeric", name: "service_areas_base_km_check"
+    t.check_constraint "detour_factor >= 1::numeric", name: "service_areas_detour_factor_check"
+    t.check_constraint "fare_per_km >= 0::numeric", name: "service_areas_fare_per_km_check"
+    t.check_constraint "special_trip_fare IS NULL OR special_trip_fare >= 0::numeric", name: "service_areas_special_trip_fare_check"
+    t.check_constraint "speed_kmh > 0::numeric", name: "service_areas_speed_kmh_check"
+    t.check_constraint "wait_minutes >= 0::numeric", name: "service_areas_wait_minutes_check"
+  end
+
   create_table "stations", primary_key: "station_id", id: :string, force: :cascade do |t|
     t.string "name", null: false
     t.string "short_name", default: "", null: false
@@ -245,6 +266,8 @@ ActiveRecord::Schema[7.2].define(version: 32) do
     t.text "notes", default: "", null: false
     t.integer "position", default: 0, null: false
     t.jsonb "extra", default: {}, null: false
+    t.string "service_shape", default: "path", null: false
+    t.check_constraint "service_shape::text = ANY (ARRAY['path'::character varying, 'area'::character varying]::text[])", name: "transport_modes_service_shape_check"
   end
 
   create_table "users", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -271,5 +294,6 @@ ActiveRecord::Schema[7.2].define(version: 32) do
   add_foreign_key "graph_versions", "users", column: "published_by_id", on_delete: :nullify
   add_foreign_key "route_plan_events", "users"
   add_foreign_key "saved_routes", "users"
+  add_foreign_key "service_areas", "lines", on_delete: :cascade
   add_foreign_key "station_access_points", "stations", primary_key: "station_id", on_delete: :cascade, deferrable: :deferred
 end

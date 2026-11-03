@@ -314,6 +314,7 @@ After a 201, the server deletes the `full_graph`, `graph_version`, and `stations
 | Number > 0 | A JSON number, more than 0. |
 | Lat, Lng | A JSON number from -90 to 90, and from -180 to 180. |
 | Path | An array of two or more `{ "lat": Lat, "lng": Lng }` objects. |
+| Boundary | An array of 3 to 200 `{ "lat": Lat, "lng": Lng }` objects. The ring must not cross itself. A last point equal to the first is dropped. |
 
 For each `*_enabled` change: when `enabled` is `true`, the server stores `reason` as `null`.
 
@@ -342,6 +343,12 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 | `transfer_add` | Two stations | Adds an INTERCHANGE edge |
 | `transfer_update` | INTERCHANGE edge | The fields that you send |
 | `transfer_delete` | INTERCHANGE edge | Deletes the edge |
+| `service_area_add` | New line | Adds a tricycle service area line, its boundary, and its terminals |
+| `service_area_boundary` | Service area | `boundary` |
+| `service_area_fare` | Service area | The fare fields and `accepted_payments` |
+| `service_area_timing` | Service area | `speed_kmh`, `detour_factor`, `wait_minutes` |
+| `service_area_terminal_add` | Service area | Adds a terminal stop |
+| `service_area_terminal_delete` | Station | Deletes a terminal stop and its transfers |
 
 ### Line changes
 
@@ -485,6 +492,13 @@ Rules:
 - The server stores `polyline` and `distance_km` as sent. It does not snap the path to the stations and does not compute the distance.
 - `transfer_add` sets `isInterchange: true` on both stations. `transfer_delete` sets `isInterchange: false` on each end station that has no other INTERCHANGE edge.
 - `transfer_update` and `transfer_delete` refuse an edge whose line is not `INTERCHANGE`.
+
+### Service area changes
+
+A service area is a tricycle line that has a boundary and terminal stops, but no edges. The
+fields, the rules, and the graph JSON are in [tricycle-service-areas.md](tricycle-service-areas.md).
+`line_road_fare` and `line_direction` refuse a service area line. `line_delete` also deletes
+the service area and its terminals.
 
 ---
 

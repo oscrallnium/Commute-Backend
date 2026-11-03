@@ -370,6 +370,7 @@ class GraphService
     lng = lng_raw.to_f
     ref = Station.find_by(station_id: ref_id)
     return Result.new(success?: false, errors: [{ field: "referenceStationId", message: "Reference station not found." }]) unless ref
+    return service_area_terminal_refusal(ref) if service_area_terminal?(ref)
     if ref.type == "train"
       return Result.new(success?: false, errors: [{ field: "mode", message: "Inserting stops isn't supported for train lines (shared bidirectional stations)." }])
     end
@@ -495,6 +496,7 @@ class GraphService
     if station.type == "train"
       return Result.new(success?: false, errors: [{ field: "mode", message: "Removing stops isn't supported for train lines (shared bidirectional stations)." }])
     end
+    return service_area_terminal_refusal(station) if service_area_terminal?(station)
 
     line_id = station.line
     prefix  = chain_prefix(station.station_id)
@@ -551,7 +553,8 @@ class GraphService
       edges: source[:edges].select { |e| vis.edge_visible?(e) }.map { |e| edge_json(e) },
       fare_matrix: source[:fares].select { |f| vis.line_id_visible?(f.line_name) },
       rail_fare_tables: source[:rail_fares].select { |t| vis.line_id_visible?(t.line_id) }
-                                           .to_h { |t| [t.line_id, visible_rail_fare_json(t, vis)] }
+                                           .to_h { |t| [t.line_id, visible_rail_fare_json(t, vis)] },
+      service_areas: public_service_areas_json(source)
     )
   end
 
@@ -565,7 +568,8 @@ class GraphService
       stations: source[:stations].map { |s| station_json(s).merge(ops_state_json(s, hidden: !vis.station_visible?(s))) },
       edges: source[:edges].map { |e| edge_json(e).merge(ops_state_json(e, hidden: !vis.edge_visible?(e))) },
       fare_matrix: source[:fares],
-      rail_fare_tables: source[:rail_fares].to_h { |t| [t.line_id, t.as_graph_json] }
+      rail_fare_tables: source[:rail_fares].to_h { |t| [t.line_id, t.as_graph_json] },
+      service_areas: admin_service_areas_json(source)
     )
   end
 
@@ -612,10 +616,13 @@ class GraphService
     end
 
     mode = payload[:mode] || payload["mode"]
-    valid_modes = TransportMode.pluck(:id)
-    unless valid_modes.include?(mode)
+    mode_shapes = TransportMode.pluck(:id, :service_shape).to_h
+    if !mode_shapes.key?(mode)
       errors << { field: "mode",
-                  message: "Mode '#{mode}' is invalid. Valid: #{valid_modes.join(", ")}." }
+                  message: "Mode '#{mode}' is invalid. Valid: #{mode_shapes.keys.join(", ")}." }
+    elsif mode_shapes[mode] == "area"
+      errors << { field: "mode",
+                  message: "Mode '#{mode}' runs in a service area. Publish a service_area_add change instead." }
     end
 
     base_fare = (payload[:baseFare] || payload["baseFare"]).to_f
@@ -1094,11 +1101,12 @@ class GraphService
       meta: GraphMeta.first!, modes: TransportMode.order(:position), payments: PaymentMethod.order(:id),
       peak: PeakHourConfig.first, fares: FareMatrix.all.to_a, rail_fares: RailFareTable.order(:line_id).to_a,
       lines: lines, stations: stations, edges: Edge.order(:line, :edge_id).to_a,
+      service_areas: ServiceArea.order(:line_id).to_a,
       visibility: GraphVisibility.new(lines: lines, stations: stations)
     }
   end
 
-  def graph_payload(source, modes:, lines:, stations:, edges:, fare_matrix:, rail_fare_tables:)
+  def graph_payload(source, modes:, lines:, stations:, edges:, fare_matrix:, rail_fare_tables:, service_areas:)
     meta = source[:meta]
     {
       version: meta.version,
@@ -1116,6 +1124,7 @@ class GraphService
       peakHourMultipliers: source[:peak]&.data || {},
       fareMatrix: fare_matrix.to_h { |f| [f.line_name, f.data] },
       railFareTables: rail_fare_tables,
+      serviceAreas: service_areas,
       stations: stations,
       edges: edges
     }
@@ -1126,6 +1135,39 @@ class GraphService
     keep = table.station_ids.each_index.select { |i| visibility.station_id_visible?(table.station_ids[i]) }
     { stationIds: keep.map { |i| table.station_ids[i] },
       fares: keep.map { |i| keep.map { |j| table.fares.dig(i, j) } } }
+  end
+
+  # Each zone lists the visible terminals of its line. The mode comes from the loaded lines.
+  def public_service_areas_json(source)
+    vis = source[:visibility]
+    zones = source[:service_areas].select { |zone| vis.line_id_visible?(zone.line_id) }
+    service_areas_json(source, zones) { |station| vis.station_visible?(station) }
+  end
+
+  def admin_service_areas_json(source)
+    vis = source[:visibility]
+    service_areas_json(source, source[:service_areas], hidden: ->(zone) { !vis.line_id_visible?(zone.line_id) })
+  end
+
+  def service_areas_json(source, zones, hidden: nil, &keep_station)
+    modes_by_line = source[:lines].to_h { |line| [line.id, line.mode] }
+    terminals     = source[:stations].select(&:is_terminal).group_by(&:line)
+    zones.map do |zone|
+      stations = terminals.fetch(zone.line_id, [])
+      stations = stations.select(&keep_station) if keep_station
+      json = zone.as_graph_json(terminal_ids: stations.map(&:station_id).sort)
+      json = json.merge(mode: modes_by_line[zone.line_id])
+      hidden ? json.merge(hiddenFromRiders: hidden.call(zone)) : json
+    end
+  end
+
+  def service_area_terminal?(station)
+    ServiceArea.exists?(line_id: station.line)
+  end
+
+  def service_area_terminal_refusal(station)
+    message = "Stop '#{station.station_id}' is a terminal of a service area. Use the service_area_terminal_* changes."
+    Result.new(success?: false, errors: [{ field: "id", message: message }])
   end
 
   def admin_line_json(line, hidden:)
@@ -1142,7 +1184,7 @@ class GraphService
     { id: m.id, displayName: m.display_name, pluralName: m.plural_name,
       sfSymbol: m.sf_symbol, colorHex: m.color_hex,
       mapLineWidthPt: m.map_line_width_pt.to_f, mapLineDash: m.map_line_dash,
-      mkDirectionsTransportType: m.mk_directions_type,
+      mkDirectionsTransportType: m.mk_directions_type, serviceShape: m.service_shape,
       isUserSelectable: m.is_user_selectable, isAlwaysAllowed: m.is_always_allowed,
       lines: m.lines, defaultAcceptedPayments: m.default_accepted_payments,
       notes: m.notes }.merge(m.extra || {})

@@ -28,6 +28,7 @@ class LineDeletion
     raise Error, "Line '#{@line_id}' was not found." unless line
     raise Error, "INTERCHANGE is a reserved line and cannot be deleted." if line.id == Line::INTERCHANGE_ID
 
+    ServiceAreaWriter.remove_zone!(line) if line.service_area
     refuse_when_in_use!
     TransportMode.where("? = ANY(lines)", line.id).update_all(["lines = array_remove(lines, ?)", line.id])
     FareMatrix.where(line_name: line.id).delete_all

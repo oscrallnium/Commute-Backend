@@ -6,6 +6,8 @@ class Line < ApplicationRecord
   self.primary_key = "id"
   self.table_name  = "lines"
 
+  has_one :service_area, foreign_key: :line_id, primary_key: :id, inverse_of: :line
+
   before_validation :normalize_color_hex
   validates :color_hex, format: { with: COLOR_HEX_FORMAT, message: "must look like #RRGGBB" },
                         allow_nil: true
