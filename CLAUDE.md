@@ -303,6 +303,31 @@ one-line comment.
 - Treat an N+1 query as a defect. Use `includes` for every association that a list endpoint
   serialises.
 
+### Closed sets
+
+Use `enum` for a column that holds a closed set of values. Do not use a bare constant and an
+`inclusion:` validation for a new column.
+
+| Table | Enum backing | Example |
+|---|---|---|
+| Hono or iOS reads it (`stations`, `edges`, `lines`, `station_access_points`) | Strings | `enum :boarding, { both: "both", alight_only: "alight_only" }, validate: true` |
+| Only Rails reads it | Integers | `enum :role, { commuter: 0, admin: 1 }, validate: true` |
+
+Rules:
+
+- Never use an integer enum on a table that Hono or iOS reads. They read the stored text.
+- Always pass `validate: true`. Without it, a bad value raises `ArgumentError` and the API
+  returns 500 instead of 422.
+- Add `prefix:` or `suffix:` when two enums in one model share a value, or when a value
+  conflicts with an existing method or scope name.
+- Keep one source for each set. `GraphService` owns the graph sets, such as
+  `DIRECTION_TAGS`. A model builds its enum from that source.
+- Do not change the stored values when you convert a column to an enum. Hono, iOS, and
+  existing rows depend on them.
+
+Existing constant sets (`Station::BOARDING_VALUES`, `Line::DIRECTIONS`,
+`StationAccessPoint::KINDS`) stay valid until a change converts them to enums.
+
 ---
 
 ## SOLID
