@@ -9,6 +9,8 @@ class Edge < ApplicationRecord
       id: edge_id,
       from: from_station,
       to: to_station,
+      from_access_point_id: from_access_point_id,
+      to_access_point_id: to_access_point_id,
       mode: mode,
       line: line,
       travel_time_minutes: travel_time_minutes.to_f,

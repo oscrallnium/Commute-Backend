@@ -59,6 +59,13 @@ RSpec.describe GraphChangeValidator do
     expect(errors.map { |e| [e[:index], e[:field]] }).to eq([[0, "from_station_id"], [1, "to_station_id"]])
   end
 
+  it "accepts bidirectional alone on a transfer update" do
+    clean, errors = validate({ type: "transfer_update", edge_id: "X__A__B", bidirectional: false })
+
+    expect(errors).to be_empty
+    expect(clean.first["bidirectional"]).to be false
+  end
+
   it "rejects a new access point ID that breaks the convention" do
     errors = errors_for({ type: "access_point_add", station_id: "S", access_point_id: "ap-1", kind: "both",
                           lat: 14.5, lng: 121.0 })

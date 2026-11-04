@@ -1242,6 +1242,8 @@ class GraphService
           mkDirectionsTransportType: e.mk_directions_transport_type,
           isRoadSnapped: e.is_road_snapped }
     h[:direction] = e.direction if e.direction.present?
+    h[:fromAccessPointId] = e.from_access_point_id if e.from_access_point_id
+    h[:toAccessPointId] = e.to_access_point_id if e.to_access_point_id
     h
   end
 end

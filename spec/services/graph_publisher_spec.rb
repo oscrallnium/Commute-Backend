@@ -218,6 +218,56 @@ RSpec.describe GraphPublisher do
       expect(result.status).to eq(:unprocessable_content)
     end
 
+    def add_transfer(from, to, **extra)
+      { type: "transfer_add", from_station_id: from, to_station_id: to,
+        travel_time_minutes: 4, distance_km: 0.15, polyline: path }.merge(extra)
+    end
+
+    it "allows two one-way transfers in opposite directions" do
+      expect_created(publish(add_transfer("OPST_ROAD_S3", "OPST_RAIL_C", bidirectional: false)))
+      expect_created(publish(add_transfer("OPST_RAIL_C", "OPST_ROAD_S3", bidirectional: false)))
+    end
+
+    it "refuses a transfer in the same direction as an existing one" do
+      expect_created(publish(add_transfer("OPST_ROAD_S3", "OPST_RAIL_C", bidirectional: false)))
+      result = publish(add_transfer("OPST_ROAD_S3", "OPST_RAIL_C", bidirectional: false))
+
+      expect(result.status).to eq(:unprocessable_content)
+      expect(result.body[:errors].first[:message]).to include("already exists")
+    end
+
+    it "refuses a reverse transfer when an existing one is two-way" do
+      expect_created(publish(add_transfer("OPST_ROAD_S3", "OPST_RAIL_C")))
+
+      expect(publish(add_transfer("OPST_RAIL_C", "OPST_ROAD_S3", bidirectional: false)).status).to eq(:unprocessable_content)
+    end
+
+    it "refuses a two-way transfer when a one-way reverse transfer exists" do
+      expect_created(publish(add_transfer("OPST_ROAD_S3", "OPST_RAIL_C", bidirectional: false)))
+
+      expect(publish(add_transfer("OPST_RAIL_C", "OPST_ROAD_S3")).status).to eq(:unprocessable_content)
+    end
+
+    it "turns a transfer one-way and adds the reverse transfer in one request" do
+      result = publish({ type: "transfer_update", edge_id: "X__OPST_ROAD_S2__OPST_RAIL_B", bidirectional: false },
+                       add_transfer("OPST_RAIL_B", "OPST_ROAD_S2", bidirectional: false))
+
+      expect_created(result)
+      expect(Edge.find("X__OPST_ROAD_S2__OPST_RAIL_B").bidirectional).to be false
+      expect(Edge.find("X__OPST_RAIL_B__OPST_ROAD_S2").bidirectional).to be false
+    end
+
+    it "refuses to make a transfer two-way while a reverse transfer exists" do
+      id = "X__OPST_ROAD_S2__OPST_RAIL_B"
+      expect_created(publish({ type: "transfer_update", edge_id: id, bidirectional: false },
+                             add_transfer("OPST_RAIL_B", "OPST_ROAD_S2", bidirectional: false)))
+      result = publish({ type: "transfer_update", edge_id: id, bidirectional: true })
+
+      expect(result.status).to eq(:unprocessable_content)
+      expect(result.body[:errors].first).to include(field: "bidirectional")
+      expect(Edge.find(id).bidirectional).to be false
+    end
+
     it "updates and deletes a transfer, and clears the interchange flag of a stop with no transfer left" do
       id = "X__OPST_ROAD_S2__OPST_RAIL_B"
       expect_created(publish({ type: "transfer_update", edge_id: id, travel_time_minutes: 6, polyline: path }))

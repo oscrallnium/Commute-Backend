@@ -40,10 +40,11 @@ class GraphChangeValidator
     "transfer_add" => { required: { "from_station_id" => :reference_id, "to_station_id" => :reference_id,
                                     "travel_time_minutes" => :positive, "distance_km" => :non_negative,
                                     "polyline" => :polyline },
-                        optional: { "bidirectional" => :boolean } },
+                        optional: { "bidirectional" => :boolean, "from_access_point_id" => :reference_id,
+                                    "to_access_point_id" => :reference_id } },
     "transfer_update" => { required: { "edge_id" => :reference_id },
                            optional: { "travel_time_minutes" => :positive, "distance_km" => :non_negative,
-                                       "polyline" => :polyline },
+                                       "polyline" => :polyline, "bidirectional" => :boolean },
                            at_least_one: true },
     "transfer_delete" => { required: { "edge_id" => :reference_id } },
     "service_area_add" => { required: { "line_id" => :new_id, "name" => :name, "mode" => :reference_id,
@@ -175,8 +176,9 @@ class GraphChangeValidator
     return unless from && to
 
     add_error(index, clean["type"], "to_station_id", "A transfer needs two different stops.") if from == to
-    [["from_station_id", from], ["to_station_id", to]].each do |field, id|
-      next if id.match?(NEW_ID_RE)
+    [["from_station_id", from], ["to_station_id", to], ["from_access_point_id", clean["from_access_point_id"]],
+     ["to_access_point_id", clean["to_access_point_id"]]].each do |field, id|
+      next if id.nil? || id.match?(NEW_ID_RE)
 
       add_error(index, clean["type"], field,
                 "'#{id}' does not follow the graph ID convention, so the transfer edge ID would not either.")

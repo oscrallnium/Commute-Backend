@@ -186,7 +186,7 @@ migration replaces them. Code must accept both forms until then.
 | Named station | `<LINE>_<NAME>` | `MRT3_TAFT_AVE` |
 | Generated stop | `<CHAIN>_S<n>`. `n` comes from the per-line counter `lines.last_stop_number`, so it is never reused or renumbered. Order comes from `sequence`. | `AYALA_ALABANG_NB_S4` |
 | Line edge | `<FROM_STATION>__<TO_STATION>` in the direction of travel. A double underscore separates the stations. | `AYALA_ALABANG_NB_S1__AYALA_ALABANG_NB_S2` |
-| Transfer edge | `X__<FROM_STATION>__<TO_STATION>` | `X__LRT1_EDSA__MRT_TAFT_AVE` |
+| Transfer edge | `X__<FROM_END>__<TO_END>`. An end is an access point ID when the transfer names one, else a station ID. | `X__LRT1_EDSA_AP_383B4529__MRT_TAFT_AVE_AP_4EC9B465`, `X__LRT1_EDSA__MRT_TAFT_AVE` |
 | Mode, payment method | Lowercase snake case | `bus`, `beep_card` |
 
 Rules:
@@ -198,6 +198,7 @@ Rules:
 - Inserting or removing a stop changes `sequence` values only. It never renames a station or
   an edge. Tables such as `saved_routes`, `incidents`, and `ar_world_maps` store station IDs
   with no foreign key, so a rename silently points them at a different stop.
+- A transfer's ends are fixed. To change them, delete the transfer and add a new one.
 - `INTERCHANGE` is a reserved system line for transfer walks. Do not rename it. The iOS
   engine reads it to skip fares and to stop leg merges.
 - Write a `display_name` in Title Case. Put an en dash (–) between the two end points:

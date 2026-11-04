@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 34) do
+ActiveRecord::Schema[7.2].define(version: 35) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -82,9 +82,13 @@ ActiveRecord::Schema[7.2].define(version: 34) do
     t.boolean "is_road_snapped", default: false, null: false
     t.boolean "enabled", default: true, null: false
     t.string "disabled_reason"
+    t.string "from_access_point_id"
+    t.string "to_access_point_id"
+    t.index ["from_access_point_id"], name: "index_edges_on_from_access_point_id"
     t.index ["from_station"], name: "index_edges_on_from_station"
     t.index ["line"], name: "index_edges_on_line"
     t.index ["mode"], name: "index_edges_on_mode"
+    t.index ["to_access_point_id"], name: "index_edges_on_to_access_point_id"
     t.index ["to_station"], name: "index_edges_on_to_station"
   end
 
@@ -291,6 +295,8 @@ ActiveRecord::Schema[7.2].define(version: 34) do
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "ar_world_maps", "users"
+  add_foreign_key "edges", "station_access_points", column: "from_access_point_id", primary_key: "access_point_id", on_delete: :cascade, deferrable: :deferred
+  add_foreign_key "edges", "station_access_points", column: "to_access_point_id", primary_key: "access_point_id", on_delete: :cascade, deferrable: :deferred
   add_foreign_key "graph_versions", "users", column: "published_by_id", on_delete: :nullify
   add_foreign_key "route_plan_events", "users"
   add_foreign_key "saved_routes", "users"

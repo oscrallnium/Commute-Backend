@@ -17,7 +17,7 @@ Rails.application.routes.draw do
   # line_id: "STACRUZ", format: "LRT_BUENDIA" — deleting nothing while still reporting
   # success. Every route below that carries a graph id in its path uses this constraint
   # plus `format: false` so the whole segment, dots included, lands in the param.
-  GRAPH_ID = /[^\/]+/
+  graph_id = /[^\/]+/
 
   namespace :api do
     namespace :v1 do
@@ -34,10 +34,10 @@ Rails.application.routes.draw do
       get    "graph",                to: "graph#show"
       get    "stations",             to: "stations#index"
       get    "stations/:id",         to: "stations#show",
-             constraints: { id: GRAPH_ID }, format: false
+             constraints: { id: graph_id }, format: false
       get    "routes",               to: "routes#index"
       get    "routes/:line_id",      to: "routes#show",
-             constraints: { line_id: GRAPH_ID }, format: false
+             constraints: { line_id: graph_id }, format: false
 
       # ── Saved routes (user commutes) ──────────────────────────────────────────
       resources :saved_routes, only: %i[index create destroy]
@@ -65,11 +65,11 @@ Rails.application.routes.draw do
         resources :ar_world_maps, only: %i[index show update destroy]
         resources :incidents,     only: %i[index update destroy]
         resources :stations,      only: %i[create update destroy],
-                                  constraints: { id: GRAPH_ID }, format: false
+                                  constraints: { id: graph_id }, format: false
         resources :edges,         only: %i[update],
-                                  constraints: { id: GRAPH_ID }, format: false
+                                  constraints: { id: graph_id }, format: false
         resources :lines,         only: %i[update destroy],
-                                  constraints: { id: GRAPH_ID }, format: false
+                                  constraints: { id: graph_id }, format: false
         get    "analytics/summary",      to: "analytics#summary"
         get    "analytics/hotspots",     to: "analytics#hotspots"
         get    "graph",                  to: "graph#show"
@@ -78,7 +78,7 @@ Rails.application.routes.draw do
         get    "graph/versions/:version", to: "graph_versions#show", constraints: { version: /\d+/ }
         post   "graph/routes",           to: "graph#create_route"
         delete "graph/routes/:line_id",  to: "graph#delete_route",
-               constraints: { line_id: GRAPH_ID }, format: false
+               constraints: { line_id: graph_id }, format: false
         get    "settings",               to: "settings#show"
         patch  "settings",               to: "settings#update"
       end

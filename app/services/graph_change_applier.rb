@@ -160,8 +160,14 @@ class GraphChangeApplier
     nil
   end
 
+  # The foreign key cascade deletes the transfers that use the point, so their stations get a fresh interchange flag.
   def apply_access_point_delete(c)
-    access_point_for(c).delete
+    point = access_point_for(c)
+    stations = Edge.where(line: Line::INTERCHANGE_ID)
+                   .where("from_access_point_id = :id OR to_access_point_id = :id", id: point.access_point_id)
+                   .pluck(:from_station, :to_station).flatten.uniq
+    point.delete
+    stations.each { |id| ServiceAreaWriter.refresh_interchange_flag(id) }
     nil
   end
 
@@ -181,19 +187,22 @@ class GraphChangeApplier
   def apply_transfer_add(c)
     from = stop_for(c, field: "from_station_id")
     to   = stop_for(c, field: "to_station_id")
-    edge_id = "X__#{from.station_id}__#{to.station_id}"
-    if transfer_between?(from.station_id, to.station_id)
-      raise Rejected.new("A transfer between '#{from.station_id}' and '#{to.station_id}' already exists.", field: "to_station_id")
-    end
+    from_point = transfer_point!(c, "from_access_point_id", from)
+    to_point   = transfer_point!(c, "to_access_point_id", to)
+    edge_id = "X__#{from_point || from.station_id}__#{to_point || to.station_id}"
+    from_end = { station: from.station_id, point: from_point }
+    to_end   = { station: to.station_id, point: to_point }
+    check_transfer_free!(from_end, to_end, both_ways: c.fetch("bidirectional", true))
 
-    Edge.create!(transfer_attrs(c, edge_id: edge_id, from: from.station_id, to: to.station_id))
+    Edge.create!(transfer_attrs(c, edge_id: edge_id, from_end: from_end, to_end: to_end))
     Station.where(station_id: [from.station_id, to.station_id]).update_all(is_interchange: true, updated_at: Time.current)
     edge_id
   end
 
   def apply_transfer_update(c)
     edge = transfer_for(c)
-    attrs = c.slice("travel_time_minutes", "distance_km")
+    attrs = c.slice("travel_time_minutes", "distance_km", "bidirectional")
+    check_reverse_free!(edge) if c["bidirectional"] == true
     attrs["polyline_coordinates"] = c["polyline"] if c.key?("polyline")
     edge.update!(attrs)
     nil
@@ -213,15 +222,53 @@ class GraphChangeApplier
     raise Rejected.new("Edge '#{edge.edge_id}' is on line '#{edge.line}', not INTERCHANGE.", field: "edge_id")
   end
 
-  def transfer_between?(a, b)
-    Edge.where(line: Line::INTERCHANGE_ID)
-        .where(from_station: a, to_station: b).or(Edge.where(line: Line::INTERCHANGE_ID, from_station: b, to_station: a))
-        .exists?
+  # Returns the access point ID when it exists and belongs to the station. Returns nil when the field is absent.
+  def transfer_point!(c, field, station)
+    id = c[field]
+    return nil if id.nil?
+
+    point = StationAccessPoint.find_by(access_point_id: id)
+    raise Rejected.new("Access point '#{id}' was not found.", field: field) unless point
+    return id if point.station_id == station.station_id
+
+    raise Rejected.new("Access point '#{id}' belongs to '#{point.station_id}', not '#{station.station_id}'.", field: field)
   end
 
-  def transfer_attrs(c, edge_id:, from:, to:)
+  # An end is { station:, point: }. This is the only place that compares transfer ends; nil matches nil.
+  def transfer_between(from_end, to_end, except: nil)
+    scope = Edge.where(line: Line::INTERCHANGE_ID)
+    scope = scope.where.not(edge_id: except) if except
+    scope.find_by(from_station: from_end[:station], from_access_point_id: from_end[:point],
+                  to_station: to_end[:station], to_access_point_id: to_end[:point])
+  end
+
+  # Rejects a transfer with the same ends in the same direction, or with the reverse ends when either edge is two-way.
+  def check_transfer_free!(from_end, to_end, both_ways:)
+    if transfer_between(from_end, to_end)
+      raise Rejected.new("A transfer with these ends already exists from '#{from_end[:station]}' to '#{to_end[:station]}'.",
+                         field: "to_station_id")
+    end
+
+    reverse = transfer_between(to_end, from_end)
+    return unless reverse && (both_ways || reverse.bidirectional)
+
+    raise Rejected.new("A two-way transfer between these ends would overlap '#{reverse.edge_id}'.", field: "to_station_id")
+  end
+
+  # A transfer becomes two-way only when no other transfer runs between the reverse ends.
+  def check_reverse_free!(edge)
+    reverse = transfer_between({ station: edge.to_station, point: edge.to_access_point_id },
+                               { station: edge.from_station, point: edge.from_access_point_id }, except: edge.edge_id)
+    return unless reverse
+
+    raise Rejected.new("Transfer '#{reverse.edge_id}' runs in the reverse direction, so '#{edge.edge_id}' cannot be two-way.",
+                       field: "bidirectional")
+  end
+
+  def transfer_attrs(c, edge_id:, from_end:, to_end:)
     {
-      edge_id: edge_id, from_station: from, to_station: to, mode: "walk", line: Line::INTERCHANGE_ID,
+      edge_id: edge_id, from_station: from_end[:station], to_station: to_end[:station],
+      from_access_point_id: from_end[:point], to_access_point_id: to_end[:point], mode: "walk", line: Line::INTERCHANGE_ID,
       travel_time_minutes: c["travel_time_minutes"], distance_km: c["distance_km"],
       base_fare: 0, fare_per_km: 0, accepted_payments: PaymentMethod.order(:id).pluck(:id),
       is_air_conditioned: false, crowd_factor: 0.8, reliability: 1.0,
