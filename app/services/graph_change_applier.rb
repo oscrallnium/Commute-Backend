@@ -201,9 +201,10 @@ class GraphChangeApplier
 
   def apply_transfer_update(c)
     edge = transfer_for(c)
-    attrs = c.slice("travel_time_minutes", "distance_km", "bidirectional")
+    attrs = c.slice("travel_time_minutes", "distance_km", "bidirectional", "custom_path")
     check_reverse_free!(edge) if c["bidirectional"] == true
     attrs["polyline_coordinates"] = c["polyline"] if c.key?("polyline")
+    check_custom_path!(attrs.fetch("custom_path", edge.custom_path), attrs.fetch("polyline_coordinates", edge.polyline_coordinates))
     edge.update!(attrs)
     nil
   end
@@ -213,6 +214,13 @@ class GraphChangeApplier
     edge.delete
     [edge.from_station, edge.to_station].each { |id| ServiceAreaWriter.refresh_interchange_flag(id) }
     nil
+  end
+
+  # A drawn path needs at least two points, because the iOS app draws it without asking Apple Maps.
+  def check_custom_path!(custom_path, polyline)
+    return unless custom_path && (polyline.is_a?(Array) ? polyline.length : 0) < 2
+
+    raise Rejected.new("A custom path needs a polyline with at least two points.", field: "polyline")
   end
 
   def transfer_for(c)
@@ -273,7 +281,8 @@ class GraphChangeApplier
       base_fare: 0, fare_per_km: 0, accepted_payments: PaymentMethod.order(:id).pluck(:id),
       is_air_conditioned: false, crowd_factor: 0.8, reliability: 1.0,
       bidirectional: c.fetch("bidirectional", true), direction: nil,
-      polyline_coordinates: c["polyline"], mk_directions_transport_type: "walking", is_road_snapped: false
+      polyline_coordinates: c["polyline"], mk_directions_transport_type: "walking", is_road_snapped: false,
+      custom_path: c.fetch("custom_path", false)
     }
   end
 end

@@ -84,6 +84,7 @@ ActiveRecord::Schema[7.2].define(version: 35) do
     t.string "disabled_reason"
     t.string "from_access_point_id"
     t.string "to_access_point_id"
+    t.boolean "custom_path", default: false, null: false
     t.index ["from_access_point_id"], name: "index_edges_on_from_access_point_id"
     t.index ["from_station"], name: "index_edges_on_from_station"
     t.index ["line"], name: "index_edges_on_line"

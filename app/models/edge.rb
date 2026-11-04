@@ -25,7 +25,8 @@ class Edge < ApplicationRecord
       direction: direction,
       polyline_coordinates: polyline_coordinates,
       mk_directions_transport_type: mk_directions_transport_type,
-      is_road_snapped: is_road_snapped
+      is_road_snapped: is_road_snapped,
+      custom_path: custom_path
     }
   end
 end
