@@ -24,6 +24,8 @@ class GraphService
   NEW_LINE_ID_RE    = /\A[A-Z][A-Z0-9]*(_[A-Z0-9]+)*\z/
   # Rule for a line id that already has stations. It still accepts dots, e.g. "STACRUZ.LRT_BUENDIA".
   LEGACY_LINE_ID_RE = /\A[A-Z0-9_.]+\z/
+  # Rule for a new payment method id: lowercase snake case, for example "beep_card".
+  PAYMENT_METHOD_ID_RE = /\A[a-z][a-z0-9]*(_[a-z0-9]+)*\z/
   # A generated stop id: the chain, then `_STOP<n>` (legacy) or `_S<n>`.
   STOP_ID_RE  = /\A(.+)_(?:STOP|S)(\d+)\z/
   TIME_RE     = /\A([01]\d|2[0-3]):[0-5]\d\z/
@@ -98,6 +100,7 @@ class GraphService
     line_id      = payload[:lineID]     || payload["lineID"]
     mode         = payload[:mode]       || payload["mode"]
     display_name = payload[:displayName] || payload["displayName"]
+    accepted_payments = accepted_payments_for(payload)
     stations = []
     edges    = []
 
@@ -194,7 +197,7 @@ class GraphService
             distance_km: dist_km,
             base_fare: payload[:baseFare].to_f,
             fare_per_km: payload[:farePerKm].to_f,
-            accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
+            accepted_payments: accepted_payments,
             is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
             crowd_factor: payload[:crowdFactor].to_f,
             reliability: payload[:reliability].to_f,
@@ -246,7 +249,7 @@ class GraphService
           distance_km: closing_dist,
           base_fare: payload[:baseFare].to_f,
           fare_per_km: payload[:farePerKm].to_f,
-          accepted_payments: payload[:acceptedPayments] || payload["acceptedPayments"] || [],
+          accepted_payments: accepted_payments,
           is_air_conditioned: payload[:isAirConditioned] || payload["isAirConditioned"] || false,
           crowd_factor: payload[:crowdFactor].to_f,
           reliability: payload[:reliability].to_f,
@@ -643,7 +646,7 @@ class GraphService
                   message: "reliability must be between 0 and 1." }
     end
 
-    payments       = payload[:acceptedPayments] || payload["acceptedPayments"] || []
+    payments       = accepted_payments_for(payload)
     valid_payments = PaymentMethod.pluck(:id)
     if payments.empty?
       errors << { field: "acceptedPayments", message: "At least one payment method is required." }
@@ -742,6 +745,18 @@ class GraphService
   def fetch_either(hash, key)
     return hash[key] if hash.key?(key)
     hash[key.to_s] if hash.respond_to?(:key?) && hash.key?(key.to_s)
+  end
+
+  # Returns the sent acceptedPayments. When the key is absent, it returns the payments of an
+  # existing edge on the line, or else the default payments of the mode.
+  def accepted_payments_for(payload)
+    sent = fetch_either(payload, :acceptedPayments)
+    return sent unless sent.nil?
+
+    line_id = payload[:lineID] || payload["lineID"]
+    mode    = payload[:mode] || payload["mode"]
+    Edge.where(line: line_id).pick(:accepted_payments).presence ||
+      TransportMode.find_by(id: mode)&.default_accepted_payments || []
   end
 
   def normalize_passes(payload)

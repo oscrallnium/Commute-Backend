@@ -348,7 +348,7 @@ Adds a whole line. The server calls `GraphService.add_route(params.to_unsafe_h)`
 | `mode` | String | Required. Must be an ID in `transport_modes`. |
 | `baseFare`, `farePerKm` | Number | 0 or more. |
 | `crowdFactor`, `reliability` | Number | 0 to 1. |
-| `acceptedPayments` | Array of String | At least one. Each must be an ID in `payment_methods`. |
+| `acceptedPayments` | Array of String | Optional. At least one when sent. Each must be an ID in `payment_methods`. When absent or `null`, the new edges take the payments of an existing edge of the line, or else the `default_accepted_payments` of the mode. |
 | `isAirConditioned` | Bool | Optional. |
 | `openTime`, `closeTime` | String | Required. `HH:mm`. |
 | `colorHex` | String | Optional. `#RRGGBB`. |

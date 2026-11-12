@@ -14,7 +14,8 @@ class GraphPublisher
     end
   end
 
-  CREATED_ID_FIELDS = { "transfer_add" => "edge_id", "service_area_terminal_add" => "station_id" }.freeze
+  CREATED_ID_FIELDS = { "transfer_add" => "edge_id", "service_area_terminal_add" => "station_id",
+                        "payment_method_add" => "payment_method_id" }.freeze
 
   def self.publish(base_version:, changes:, user:)
     new(base_version: base_version, changes: changes, user: user).publish

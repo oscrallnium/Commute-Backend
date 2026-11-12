@@ -6,10 +6,13 @@ class GraphChangeValidator
   MAX_NAME_LENGTH = 120
   MAX_SHORT_NAME  = 20
   MAX_REASON      = 200
+  MAX_NOTES       = 500
   # The character rule for every new graph ID.
   NEW_ID_RE = GraphService::NEW_LINE_ID_RE
 
   ENABLED_FIELDS = { "enabled" => :boolean, "reason" => :reason }.freeze
+  PAYMENT_METHOD_FIELDS = { "name" => :name, "sf_symbol" => :label, "color_hex" => :required_color,
+                            "is_default" => :boolean, "accepted_by_modes" => :mode_ids, "notes" => :notes }.freeze
   TYPES = {
     "line_name" => { required: { "line_id" => :reference_id, "name" => :name } },
     "line_color" => { required: { "line_id" => :reference_id, "color_hex" => :color } },
@@ -68,7 +71,14 @@ class GraphChangeValidator
     "service_area_terminal_add" => { required: { "line_id" => :reference_id, "name" => :name,
                                                  "lat" => :lat, "lng" => :lng },
                                      optional: { "short_name" => :short_name } },
-    "service_area_terminal_delete" => { required: { "station_id" => :reference_id } }
+    "service_area_terminal_delete" => { required: { "station_id" => :reference_id } },
+    "payment_method_add" => { required: { "payment_method_id" => :payment_method_id, "name" => :name },
+                              optional: PAYMENT_METHOD_FIELDS.except("name") },
+    "payment_method_update" => { required: { "payment_method_id" => :reference_id },
+                                 optional: PAYMENT_METHOD_FIELDS, at_least_one: true },
+    "payment_method_delete" => { required: { "payment_method_id" => :reference_id } },
+    "line_payments" => { required: { "line_id" => :reference_id, "accepted_payments" => :payment_ids } },
+    "mode_default_payments" => { required: { "mode_id" => :reference_id, "accepted_payments" => :payment_ids } }
   }.freeze
   MAX_TERMINALS = 20
   TERMINAL_KEYS = %w[name short_name lat lng].freeze
@@ -247,6 +257,27 @@ class GraphChangeValidator
     color.match?(Line::COLOR_HEX_FORMAT) ? [color, nil] : [nil, "must look like #RRGGBB, or be null."]
   end
 
+  def clean_required_color(value)
+    color, = clean_color(value)
+    color ? [color, nil] : [nil, "must look like #RRGGBB."]
+  end
+
+  def clean_notes(value)
+    if value.is_a?(String) && value.strip.length <= MAX_NOTES
+      [value.strip, nil]
+    else
+      [nil, "must be text of #{MAX_NOTES} characters or fewer."]
+    end
+  end
+
+  def clean_payment_method_id(value)
+    if clean_reference_id(value).last.nil? && value.match?(GraphService::PAYMENT_METHOD_ID_RE)
+      [value, nil]
+    else
+      [nil, "must use lowercase letters, digits, and single underscores."]
+    end
+  end
+
   def clean_line_direction(value) = enum(value, Line::DIRECTIONS)
   def clean_boarding(value) = enum(value, Station::BOARDING_VALUES)
   def clean_access_kind(value) = enum(value, StationAccessPoint::KINDS)
@@ -353,6 +384,14 @@ class GraphChangeValidator
     valid = value.is_a?(Array) && value.any? && value.all? { |id| clean_reference_id(id).last.nil? }
     return [nil, "must list one or more payment method IDs."] unless valid
     return [nil, "must not list a payment method twice."] unless value.uniq.length == value.length
+
+    [value, nil]
+  end
+
+  def clean_mode_ids(value)
+    valid = value.is_a?(Array) && value.all? { |id| clean_reference_id(id).last.nil? }
+    return [nil, "must be a list of mode IDs."] unless valid
+    return [nil, "must not list a mode twice."] unless value.uniq.length == value.length
 
     [value, nil]
   end

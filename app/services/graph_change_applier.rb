@@ -11,8 +11,10 @@ class GraphChangeApplier
   end
 
   # Line changes that the reserved INTERCHANGE line refuses.
-  INTERCHANGE_LOCKED_TYPES = %w[line_direction line_enabled line_road_fare line_rail_fares line_delete].freeze
+  INTERCHANGE_LOCKED_TYPES = %w[line_direction line_enabled line_road_fare line_rail_fares line_payments
+                                line_delete].freeze
   NO_ROAD_FARE_MODES       = %w[train walk].freeze
+  PAYMENT_METHOD_FIELDS    = %w[name sf_symbol color_hex is_default accepted_by_modes notes].freeze
 
   # Returns the ID of the row that an add change creates, or nil.
   def apply(change)
@@ -62,6 +64,18 @@ class GraphChangeApplier
     nil
   end
 
+  # Writes every edge of the line, hidden edges included.
+  def apply_line_payments(c)
+    line = line_for(c)
+    refuse_service_area!(line, "Use service_area_fare.")
+    edges = Edge.where(line: line.id)
+    raise Rejected.new("Line '#{line.id}' has no edges to carry the payments.", field: "line_id") unless edges.exists?
+
+    known_payments!(c["accepted_payments"])
+    edges.update_all(accepted_payments: c["accepted_payments"], updated_at: Time.current)
+    nil
+  end
+
   def apply_line_rail_fares(c)
     line = line_for(c)
     raise Rejected.new("Line '#{line.id}' is not a train line.", field: "line_id") unless line.mode == "train"
@@ -97,6 +111,84 @@ class GraphChangeApplier
     end
 
     line
+  end
+
+  # ── Payment methods ──
+
+  # Returns the ID of the new payment method.
+  def apply_payment_method_add(c)
+    id = c["payment_method_id"]
+    raise Rejected.new("Payment method '#{id}' already exists.", field: "payment_method_id") if PaymentMethod.exists?(id)
+
+    PaymentMethod.create!(payment_method_attrs(c).merge(id: id))
+    id
+  end
+
+  def apply_payment_method_update(c)
+    payment_method_for(c).update!(payment_method_attrs(c))
+    nil
+  end
+
+  # Walks pass every payment filter, so INTERCHANGE edges and always-allowed modes lose the ID
+  # without a refusal. Any other row that lists the ID refuses the delete.
+  def apply_payment_method_delete(c)
+    payment = payment_method_for(c)
+    uses = payment_method_uses(payment.id)
+    if uses.any?
+      raise Rejected.new("Payment method '#{payment.id}' is still in use: #{uses.join("; ")}. Remove it there first.",
+                         field: "payment_method_id")
+    end
+
+    remove_from_walks!(payment.id)
+    payment.delete
+    nil
+  end
+
+  def apply_mode_default_payments(c)
+    mode = TransportMode.find_by(id: c["mode_id"])
+    raise Rejected.new("Mode '#{c["mode_id"]}' was not found.", field: "mode_id") unless mode
+
+    known_payments!(c["accepted_payments"])
+    mode.update!(default_accepted_payments: c["accepted_payments"])
+    nil
+  end
+
+  def payment_method_for(c)
+    PaymentMethod.find_by(id: c["payment_method_id"]) ||
+      raise(Rejected.new("Payment method '#{c["payment_method_id"]}' was not found.", field: "payment_method_id"))
+  end
+
+  def payment_method_attrs(c)
+    known_modes!(c["accepted_by_modes"]) if c.key?("accepted_by_modes")
+    c.slice(*PAYMENT_METHOD_FIELDS).transform_keys { |key| key == "name" ? "display_name" : key }
+  end
+
+  # Returns one text part for each kind of row that lists the payment method, outside walks.
+  def payment_method_uses(id)
+    lines = Edge.where("? = ANY(accepted_payments)", id).where.not(line: Line::INTERCHANGE_ID)
+                .distinct.order(:line).pluck(:line)
+    areas = ServiceArea.where("? = ANY(accepted_payments)", id).order(:line_id).pluck(:line_id)
+    modes = TransportMode.where(is_always_allowed: false).where("? = ANY(default_accepted_payments)", id)
+                         .order(:id).pluck(:id)
+    { "edges of lines" => lines, "service areas" => areas, "mode defaults" => modes }
+      .filter_map { |label, ids| "#{label} #{ids.join(", ")}" if ids.any? }
+  end
+
+  def remove_from_walks!(id)
+    Edge.where(line: Line::INTERCHANGE_ID).where("? = ANY(accepted_payments)", id)
+        .update_all(["accepted_payments = array_remove(accepted_payments, ?), updated_at = ?", id, Time.current])
+    TransportMode.where(is_always_allowed: true)
+                 .update_all(["default_accepted_payments = array_remove(default_accepted_payments, ?)", id])
+  end
+
+  def known_payments!(ids)
+    unknown = PaymentMethod.unknown_ids(ids)
+    raise Rejected.new("Unknown payment methods: #{unknown.join(", ")}.", field: "accepted_payments") if unknown.any?
+  end
+
+  def known_modes!(ids)
+    unknown = ids - TransportMode.where(id: ids).pluck(:id)
+    raise Rejected.new("Unknown modes: #{unknown.join(", ")}.", field: "accepted_by_modes") if unknown.any?
   end
 
   # ── Service areas ──

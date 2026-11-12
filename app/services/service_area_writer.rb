@@ -108,7 +108,7 @@ class ServiceAreaWriter
   end
 
   def unknown_payments!(ids)
-    unknown = ids - PaymentMethod.pluck(:id)
+    unknown = PaymentMethod.unknown_ids(ids)
     reject!("Unknown payment methods: #{unknown.join(", ")}.", "accepted_payments") if unknown.any?
   end
 

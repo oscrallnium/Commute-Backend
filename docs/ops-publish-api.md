@@ -349,6 +349,11 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 | `service_area_timing` | Service area | `speed_kmh`, `detour_factor`, `wait_minutes` |
 | `service_area_terminal_add` | Service area | Adds a terminal stop |
 | `service_area_terminal_delete` | Station | Deletes a terminal stop and its transfers |
+| `payment_method_add` | New payment method | Adds a `payment_methods` row |
+| `payment_method_update` | Payment method | The fields that you send |
+| `payment_method_delete` | Payment method | Deletes the row |
+| `line_payments` | Line | `accepted_payments` on every edge of the line |
+| `mode_default_payments` | Mode | `default_accepted_payments` |
 
 ### Line changes
 
@@ -492,6 +497,43 @@ Rules:
 - The server stores `polyline` and `distance_km` as sent. It does not snap the path to the stations and does not compute the distance.
 - `transfer_add` sets `isInterchange: true` on both stations. `transfer_delete` sets `isInterchange: false` on each end station that has no other INTERCHANGE edge.
 - `transfer_update` and `transfer_delete` refuse an edge whose line is not `INTERCHANGE`.
+
+### Payment changes
+
+```json
+{ "type": "payment_method_add", "payment_method_id": "maribank", "name": "MariBank", "sf_symbol": "building.columns.fill", "color_hex": "#FF5722", "is_default": false, "accepted_by_modes": ["jeepney"], "notes": "QR scan on the vehicle terminal." }
+{ "type": "payment_method_update", "payment_method_id": "gcash", "accepted_by_modes": ["jeepney", "train"] }
+{ "type": "payment_method_delete", "payment_method_id": "maribank" }
+{ "type": "line_payments", "line_id": "MRT3", "accepted_payments": ["beep_card", "cash", "gcash", "card"] }
+{ "type": "mode_default_payments", "mode_id": "jeepney", "accepted_payments": ["cash"] }
+```
+
+| `type` | Field | Type | Required |
+|---|---|---|---|
+| `payment_method_add` | `payment_method_id` | Payment ID: matches `^[a-z][a-z0-9]*(_[a-z0-9]+)*$`, not in use | Yes |
+| | `name` | Name | Yes |
+| | `sf_symbol` | Label | No (default `""`) |
+| | `color_hex` | `"#RRGGBB"`, any case. Not `null`. | No (default `"#000000"`) |
+| | `is_default` | Bool | No (default `false`) |
+| | `accepted_by_modes` | Array of mode ID, no repeats, can be empty | No (default `[]`) |
+| | `notes` | A string, trimmed, 0 to 500 characters | No (default `""`) |
+| `payment_method_update` | `payment_method_id` | ID | Yes |
+| | `name`, `sf_symbol`, `color_hex`, `is_default`, `accepted_by_modes`, `notes` | As above | Send one or more |
+| `payment_method_delete` | `payment_method_id` | ID | Yes |
+| `line_payments` | `line_id` | ID | Yes |
+| | `accepted_payments` | Array of payment ID, one or more, no repeats | Yes |
+| `mode_default_payments` | `mode_id` | ID | Yes |
+| | `accepted_payments` | Array of payment ID, one or more, no repeats | Yes |
+
+Rules:
+
+- `name` writes the `display_name` column.
+- Every mode in `accepted_by_modes` must exist in `transport_modes`. Every ID in `accepted_payments` must exist in `payment_methods`. A payment method that an earlier change in the same publish adds counts.
+- `payment_method_add` does not add the new ID to any edge or mode default. Send `line_payments` or `mode_default_payments` for that.
+- `payment_method_delete` removes the ID from every INTERCHANGE edge and from the default of each mode with `is_always_allowed: true`. Walks pass every payment filter in the app, so these lists have no effect on routes.
+- `payment_method_delete` refuses the change while any other edge, any service area, or the default of any other mode lists the ID. The message names the lines, the service areas, and the modes.
+- `line_payments` writes every edge whose `line` is the line, hidden edges included. It refuses `INTERCHANGE`, a service area line (use `service_area_fare`), and a line with no edges.
+- `mode_default_payments` works on any mode. The default applies to a new line that `POST /api/v1/admin/graph/routes` creates without `acceptedPayments`. It does not change existing edges.
 
 ### Service area changes
 
