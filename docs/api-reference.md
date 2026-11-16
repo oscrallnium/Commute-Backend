@@ -429,8 +429,11 @@ See [Ops Publish API](ops-publish-api.md#delete-apiv1adminlinesid). 200: `{ "dat
 
 ### `GET /api/v1/admin/settings`
 
-200: `{ "data": { "enforce_operating_hours": true } }`.
+200: `{ "data": { "enforce_operating_hours": true, "scheduled_max_wait_minutes": 60 } }`.
 
 ### `PATCH /api/v1/admin/settings`
 
-Body: `{ "enforce_operating_hours": false }`. 200: the same shape as GET. The action busts the graph cache. It does not raise the graph version.
+Body: one or both keys, for example `{ "enforce_operating_hours": false, "scheduled_max_wait_minutes": 45 }`. 200: the same shape as GET.
+
+- `scheduled_max_wait_minutes` is a whole number from 1 to 600. Any other value returns 422 `{ "error": "Validation failed", "errors": [{ "field", "message" }] }`, and the server saves nothing.
+- A change to any value raises the graph version and busts the graph cache. A request that changes nothing does neither.

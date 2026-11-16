@@ -13,6 +13,12 @@ class GraphChangeValidator
   ENABLED_FIELDS = { "enabled" => :boolean, "reason" => :reason }.freeze
   PAYMENT_METHOD_FIELDS = { "name" => :name, "sf_symbol" => :label, "color_hex" => :required_color,
                             "is_default" => :boolean, "accepted_by_modes" => :mode_ids, "notes" => :notes }.freeze
+  EXCEPTION_FIELDS = { "direction" => :direction_word, "start_date" => :date, "end_date" => :date,
+                       "kind" => :exception_kind, "start" => :time, "end" => :time,
+                       "departures" => :departure_times, "note" => :note }.freeze
+  SCHEDULE_ITEM_FIELDS = { "days" => :service_days, "kind" => :schedule_kind, "start" => :time, "end" => :time,
+                           "departures" => :departure_times, "note" => :note }.freeze
+  DATE_RE = /\A\d{4}-\d{2}-\d{2}\z/
   TYPES = {
     "line_name" => { required: { "line_id" => :reference_id, "name" => :name } },
     "line_color" => { required: { "line_id" => :reference_id, "color_hex" => :color } },
@@ -77,6 +83,16 @@ class GraphChangeValidator
     "payment_method_update" => { required: { "payment_method_id" => :reference_id },
                                  optional: PAYMENT_METHOD_FIELDS, at_least_one: true },
     "payment_method_delete" => { required: { "payment_method_id" => :reference_id } },
+    "service_schedule_set" => { required: { "line_id" => :reference_id, "schedules" => :schedules },
+                                optional: { "direction" => :direction_word } },
+    "service_schedule_clear" => { required: { "line_id" => :reference_id },
+                                  optional: { "direction" => :direction_word } },
+    "service_exception_add" => { required: { "line_id" => :reference_id, "start_date" => :date,
+                                             "end_date" => :date, "kind" => :exception_kind },
+                                 optional: EXCEPTION_FIELDS.slice("direction", "start", "end", "departures", "note") },
+    "service_exception_update" => { required: { "exception_id" => :reference_id },
+                                    optional: EXCEPTION_FIELDS, at_least_one: true },
+    "service_exception_delete" => { required: { "exception_id" => :reference_id } },
     "line_payments" => { required: { "line_id" => :reference_id, "accepted_payments" => :payment_ids } },
     "mode_default_payments" => { required: { "mode_id" => :reference_id, "accepted_payments" => :payment_ids } }
   }.freeze
@@ -151,6 +167,8 @@ class GraphChangeValidator
     when "line_rail_fares" then check_fare_grid(clean, index)
     when "access_point_update" then check_lat_lng_pair(clean, index)
     when "transfer_add" then check_transfer_ends(clean, index)
+    when "service_exception_add" then check_exception_add(clean, index)
+    when "service_exception_update" then check_exception_update(clean, index)
     end
     clean["reason"] = nil if clean["enabled"] == true
   end
@@ -193,6 +211,49 @@ class GraphChangeValidator
 
       add_error(index, clean["type"], field,
                 "'#{id}' does not follow the graph ID convention, so the transfer edge ID would not either.")
+    end
+  end
+
+  def check_exception_add(clean, index)
+    check_date_order(clean, index)
+    check_times_fit_kind(clean, index)
+  end
+
+  def check_times_fit_kind(clean, index)
+    field, message = time_rule_error(clean)
+    add_error(index, clean["type"], field, message) if message
+  end
+
+  # An update that sends kind must carry the times of that kind. The writer clears the old times.
+  def check_exception_update(clean, index)
+    check_date_order(clean, index)
+    return check_times_fit_kind(clean, index) if clean["kind"]
+
+    return unless clean["start"] && clean["start"] == clean["end"]
+
+    add_error(index, clean["type"], "end", "end must differ from start.")
+  end
+
+  def check_date_order(clean, index)
+    return unless clean["start_date"] && clean["end_date"] && clean["end_date"] < clean["start_date"]
+
+    add_error(index, clean["type"], "end_date", "end_date must not be before start_date.")
+  end
+
+  # Returns [field, message] when the times do not fit the kind, or nil. Keys are start, end, and departures.
+  def time_rule_error(item)
+    case item["kind"]
+    when "window"
+      return ["start", "A window needs start and end."] unless item["start"] && item["end"]
+      return ["end", "end must differ from start."] if item["start"] == item["end"]
+
+      ["departures", "A window takes no departures."] if item["departures"]
+    when "departures"
+      return ["departures", "Departures need a list of times."] unless item["departures"]
+
+      ["start", "Departures take no start or end."] if item["start"] || item["end"]
+    when "no_service"
+      ["kind", "no_service takes no times."] if item.keys.intersect?(%w[start end departures])
     end
   end
 
@@ -292,6 +353,73 @@ class GraphChangeValidator
 
   def clean_time(value)
     value.is_a?(String) && value.match?(GraphService::TIME_RE) ? [value, nil] : [nil, "must be HH:mm (24-hour)."]
+  end
+
+  def clean_direction_word(value)
+    value.nil? ? [nil, nil] : enum(value, GraphService::DIRECTION_TAGS.keys)
+  end
+
+  def clean_schedule_kind(value) = enum(value, GraphService::SCHEDULE_KINDS)
+  def clean_exception_kind(value) = enum(value, GraphService::EXCEPTION_KINDS)
+
+  def clean_date(value)
+    valid = value.is_a?(String) && value.match?(DATE_RE) && Date.valid_date?(*value.split("-").map(&:to_i))
+    valid ? [value, nil] : [nil, "must be a real date as YYYY-MM-DD."]
+  end
+
+  def clean_note(value)
+    return [nil, nil] if value.nil?
+
+    text, message = clean_notes(value)
+    [text.presence, message]
+  end
+
+  def clean_service_days(value)
+    return [nil, "must list one or more days."] unless value.is_a?(Array) && value.any?
+    return [nil, "must use only: #{GraphService::SERVICE_DAYS.join(", ")}."] unless (value - GraphService::SERVICE_DAYS).empty?
+    return [nil, "must not list a day twice."] unless value.uniq.length == value.length
+
+    [value, nil]
+  end
+
+  def clean_departure_times(value)
+    return [nil, "must list one or more times."] unless value.is_a?(Array) && value.any?
+    return [nil, "must hold only HH:mm times (24-hour)."] unless value.all? { |time| clean_time(time).last.nil? }
+    return [nil, "must not list a time twice."] unless value.uniq.length == value.length
+
+    [value.sort, nil]
+  end
+
+  def clean_schedules(value)
+    unless value.is_a?(Array) && value.any?
+      return [nil, "must list one or more schedules. Use service_schedule_clear to remove them."]
+    end
+
+    items = value.each_with_index.map { |item, position| clean_schedule_item(item, position) }
+    message = items.filter_map { |_, error| error }.first
+    return [nil, message] if message
+    return [nil, "must use one kind in all items."] unless items.map { |item, _| item["kind"] }.uniq.length == 1
+
+    [items.map(&:first), nil]
+  end
+
+  def clean_schedule_item(item, position)
+    label = "item #{position + 1}"
+    return [nil, "#{label} must be an object."] unless item.is_a?(Hash)
+
+    unknown = item.keys - SCHEDULE_ITEM_FIELDS.keys
+    return [nil, "#{label} has unknown field '#{unknown.first}'."] if unknown.any?
+    return [nil, "#{label} needs days and kind."] unless item.key?("days") && item.key?("kind")
+
+    clean = {}
+    item.each do |field, raw|
+      value, message = send("clean_#{SCHEDULE_ITEM_FIELDS.fetch(field)}", raw)
+      return [nil, "#{label} #{field} #{message}"] if message
+
+      clean[field] = value
+    end
+    _, message = time_rule_error(clean)
+    message ? [nil, "#{label}: #{message}"] : [clean, nil]
   end
 
   def clean_non_negative(value)

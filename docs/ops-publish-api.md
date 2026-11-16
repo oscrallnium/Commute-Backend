@@ -354,6 +354,11 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 | `payment_method_delete` | Payment method | Deletes the row |
 | `line_payments` | Line | `accepted_payments` on every edge of the line |
 | `mode_default_payments` | Mode | `default_accepted_payments` |
+| `service_schedule_set` | Line, or one direction | Replaces its `service_schedules` rows |
+| `service_schedule_clear` | Line, or one direction | Deletes its `service_schedules` rows |
+| `service_exception_add` | Line, or one direction | Adds a `service_schedule_exceptions` row |
+| `service_exception_update` | Exception | The fields that you send |
+| `service_exception_delete` | Exception | Deletes the row |
 
 ### Line changes
 
@@ -541,6 +546,13 @@ A service area is a tricycle line that has a boundary and terminal stops, but no
 fields, the rules, and the graph JSON are in [tricycle-service-areas.md](tricycle-service-areas.md).
 `line_road_fare` and `line_direction` refuse a service area line. `line_delete` also deletes
 the service area and its terminals.
+
+### Service schedule changes
+
+A service schedule gives a line, or one direction of it, service days and trip times. A date
+exception changes the service for a date range. The fields, the rules, and the graph JSON are
+in [service-schedules.md](service-schedules.md). `service_exception_add` reports the new ID as
+`exception_id` in `created`.
 
 ---
 

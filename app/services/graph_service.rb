@@ -36,6 +36,13 @@ class GraphService
     "westbound" => "WB", "inbound" => "IN", "outbound" => "OUT"
   }.freeze
 
+  # The weekday codes that a service schedule accepts.
+  SERVICE_DAYS = %w[mon tue wed thu fri sat sun].freeze
+  # The kinds of a regular service schedule row.
+  SCHEDULE_KINDS = %w[window departures].freeze
+  # The kinds of a date exception row.
+  EXCEPTION_KINDS = %w[no_service window departures].freeze
+
   Result = Struct.new(:success?, :data, :errors, keyword_init: true)
 
   # ── Public API ──────────────────────────────────────────────────────────────
@@ -557,7 +564,9 @@ class GraphService
       fare_matrix: source[:fares].select { |f| vis.line_id_visible?(f.line_name) },
       rail_fare_tables: source[:rail_fares].select { |t| vis.line_id_visible?(t.line_id) }
                                            .to_h { |t| [t.line_id, visible_rail_fare_json(t, vis)] },
-      service_areas: public_service_areas_json(source)
+      service_areas: public_service_areas_json(source),
+      schedules: schedules_json(source[:schedules], vis),
+      schedule_exceptions: schedules_json(source[:schedule_exceptions], vis)
     )
   end
 
@@ -572,7 +581,9 @@ class GraphService
       edges: source[:edges].map { |e| edge_json(e).merge(ops_state_json(e, hidden: !vis.edge_visible?(e))) },
       fare_matrix: source[:fares],
       rail_fare_tables: source[:rail_fares].to_h { |t| [t.line_id, t.as_graph_json] },
-      service_areas: admin_service_areas_json(source)
+      service_areas: admin_service_areas_json(source),
+      schedules: schedules_json(source[:schedules]),
+      schedule_exceptions: schedules_json(source[:schedule_exceptions])
     )
   end
 
@@ -1117,16 +1128,32 @@ class GraphService
       peak: PeakHourConfig.first, fares: FareMatrix.all.to_a, rail_fares: RailFareTable.order(:line_id).to_a,
       lines: lines, stations: stations, edges: Edge.order(:line, :edge_id).to_a,
       service_areas: ServiceArea.order(:line_id).to_a,
+      schedules: ServiceSchedule.order(:line_id, :direction, :created_at).to_a,
+      schedule_exceptions: current_schedule_exceptions.to_a,
       visibility: GraphVisibility.new(lines: lines, stations: stations)
     }
   end
 
-  def graph_payload(source, modes:, lines:, stations:, edges:, fare_matrix:, rail_fare_tables:, service_areas:)
+  # Exceptions that end today or later in Philippine time.
+  def current_schedule_exceptions
+    ServiceScheduleException.where("end_date >= ?", Time.find_zone("Asia/Manila").today)
+                            .order(:line_id, :start_date)
+  end
+
+  # Groups rows by line. A line without rows is absent. Pass a visibility to drop hidden lines.
+  def schedules_json(rows, visibility = nil)
+    rows = rows.select { |row| visibility.line_id_visible?(row.line_id) } if visibility
+    rows.group_by(&:line_id).transform_values { |list| list.map(&:as_graph_json) }
+  end
+
+  def graph_payload(source, modes:, lines:, stations:, edges:, fare_matrix:, rail_fare_tables:, service_areas:,
+                    schedules:, schedule_exceptions:)
     meta = source[:meta]
     {
       version: meta.version,
       lastModified: meta.last_modified.iso8601,
       enforceOperatingHours: meta.enforce_operating_hours,
+      scheduledMaxWaitMinutes: meta.scheduled_max_wait_minutes,
       metadata: {
         region: meta.region,
         currency: meta.currency,
@@ -1141,7 +1168,9 @@ class GraphService
       railFareTables: rail_fare_tables,
       serviceAreas: service_areas,
       stations: stations,
-      edges: edges
+      edges: edges,
+      serviceSchedules: schedules,
+      serviceScheduleExceptions: schedule_exceptions
     }
   end
 

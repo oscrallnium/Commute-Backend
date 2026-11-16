@@ -200,6 +200,14 @@ class GraphChangeApplier
   def apply_service_area_terminal_add(c)    = ServiceAreaWriter.new.add_terminal(c)
   def apply_service_area_terminal_delete(c) = ServiceAreaWriter.new.delete_terminal(c)
 
+  # ── Service schedules ──
+
+  def apply_service_schedule_set(c)       = ServiceScheduleWriter.new.set(c)
+  def apply_service_schedule_clear(c)     = ServiceScheduleWriter.new.clear(c)
+  def apply_service_exception_add(c)      = ServiceScheduleWriter.new.add_exception(c)
+  def apply_service_exception_update(c)   = ServiceScheduleWriter.new.update_exception(c)
+  def apply_service_exception_delete(c)   = ServiceScheduleWriter.new.delete_exception(c)
+
   # ── Stops ──
 
   def apply_stop_name(c)       = stop_for(c).update!(name: c["name"]) && nil

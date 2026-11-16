@@ -68,8 +68,8 @@ flowchart TD
     style D fill:#2d6cdf,color:#fff
 ```
 
-`forceSync` exists for the case where an admin toggles `enforce_operating_hours`. The server does not
-raise the version for this setting, so the admin app must download the graph itself.
+`forceSync` lets the admin app download the graph at once after it changes a setting. The server
+also raises the version for a setting change, so other clients download it on their next poll.
 
 > **Warning:** **The envelope matters.** The client unwraps `{ "data": … }` and re-encodes the inner value
 > before writing to disk. Writing the raw response body instead would store the envelope, and the
@@ -89,9 +89,7 @@ raise the version for this setting, so the admin app must download the graph its
 | `PATCH /admin/edges/:id` | Yes, via `bump_version!` | Yes |
 | `PATCH /admin/lines/:id` | Yes, via `bump_version!` | Yes |
 | `DELETE /admin/lines/:id` | Yes, via `LineDeletion.call` | Yes |
-| `PATCH /admin/settings` | **No** | Yes |
-
-`PATCH /admin/settings` busts the server cache but does not raise the version. A client that has the current version does not download the changed `enforceOperatingHours`. See [Known issues](backend.md#known-issues).
+| `PATCH /admin/settings` | Yes, when a value changes | Yes, when a value changes |
 
 Anything that changes what `assemble_graph` would emit **must** bump the version. A mutation that
 doesn't is invisible to every already-installed client until a cache TTL happens to expire and

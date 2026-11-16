@@ -26,6 +26,8 @@ erDiagram
     TRANSPORT_MODES ||--o{ PAYMENT_METHODS : accepts
     LINES ||--o| FARE_MATRIX : "fare rules"
     LINES ||--o| RAIL_FARE_TABLES : "rail fares"
+    LINES ||--o{ SERVICE_SCHEDULES : "service days"
+    LINES ||--o{ SERVICE_SCHEDULE_EXCEPTIONS : "date exceptions"
     USERS ||--o{ GRAPH_VERSIONS : publishes
     USERS ||--o{ SAVED_ROUTES : saves
     USERS ||--o{ ROUTE_PLAN_EVENTS : generates
@@ -39,6 +41,30 @@ erDiagram
         string region "Metro Manila, Philippines"
         string currency "PHP"
         bool enforce_operating_hours
+        int scheduled_max_wait_minutes "1 to 600, default 60"
+    }
+    SERVICE_SCHEDULES {
+        uuid id PK
+        string line_id FK
+        string direction "nullable: every direction"
+        string_array days "mon to sun"
+        string kind "window | departures"
+        string start_time "HH:mm"
+        string end_time "HH:mm"
+        string_array departure_times "HH:mm"
+        string note
+    }
+    SERVICE_SCHEDULE_EXCEPTIONS {
+        uuid id PK
+        string line_id FK
+        string direction "nullable: every direction"
+        date start_date
+        date end_date "inclusive"
+        string kind "no_service | window | departures"
+        string start_time "HH:mm"
+        string end_time "HH:mm"
+        string_array departure_times "HH:mm"
+        string note
     }
     STATIONS {
         string station_id PK "TEXT, for example MRT_NORTH_AVE"
@@ -221,9 +247,14 @@ Consequences:
   "fareMatrix": { "MRT3": { … } },
   "railFareTables": { "MRT3": { "stationIds": […], "fares": [[null, 13.0], [13.0, null]] } },
   "stations": [… ],
-  "edges":    [… ]
+  "edges":    [… ],
+  "serviceSchedules": { "UP_DILIMAN_UPLB": [ … ] },
+  "serviceScheduleExceptions": { "UP_DILIMAN_UPLB": [ … ] }
 }
 ```
+
+`scheduledMaxWaitMinutes` follows `enforceOperatingHours`. The schedule keys are described in
+[Service schedules](service-schedules.md#graph-json).
 
 ### Case conventions — read carefully
 
@@ -255,6 +286,8 @@ schema addition:
 | `lines` | missing → `{}` | Added after the first shipped graphs |
 | `railFareTables`, `lines[*].baseKm` | ignored by the current app | Added with the ops fields |
 | `enforceOperatingHours` | missing → `true` | Backwards-compatible default |
+| `scheduledMaxWaitMinutes` | missing → `60` | Added with service schedules |
+| `serviceSchedules`, `serviceScheduleExceptions` | missing → `{}` | Added with service schedules |
 
 Add new graph fields the same way. See
 [Graph Sync → Schema evolution](graph-sync.md#schema-evolution-rules).

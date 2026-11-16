@@ -7,6 +7,10 @@ class Line < ApplicationRecord
   self.table_name  = "lines"
 
   has_one :service_area, foreign_key: :line_id, primary_key: :id, inverse_of: :line
+  has_many :service_schedules, foreign_key: :line_id, primary_key: :id, inverse_of: :line,
+                               dependent: :delete_all
+  has_many :service_schedule_exceptions, foreign_key: :line_id, primary_key: :id, inverse_of: :line,
+                                         dependent: :delete_all
 
   before_validation :normalize_color_hex
   validates :color_hex, format: { with: COLOR_HEX_FORMAT, message: "must look like #RRGGBB" },

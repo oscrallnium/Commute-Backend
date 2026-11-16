@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 36) do
+ActiveRecord::Schema[7.2].define(version: 39) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -105,6 +105,8 @@ ActiveRecord::Schema[7.2].define(version: 36) do
     t.string "region", default: "Metro Manila, Philippines", null: false
     t.string "currency", default: "PHP", null: false
     t.boolean "enforce_operating_hours", default: true, null: false
+    t.integer "scheduled_max_wait_minutes", default: 60, null: false
+    t.check_constraint "scheduled_max_wait_minutes >= 1 AND scheduled_max_wait_minutes <= 600", name: "graph_meta_scheduled_max_wait_minutes_check"
   end
 
   create_table "graph_versions", force: :cascade do |t|
@@ -232,6 +234,36 @@ ActiveRecord::Schema[7.2].define(version: 36) do
     t.check_constraint "wait_minutes >= 0::numeric", name: "service_areas_wait_minutes_check"
   end
 
+  create_table "service_schedule_exceptions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "line_id", null: false
+    t.string "direction"
+    t.date "start_date", null: false
+    t.date "end_date", null: false
+    t.string "kind", null: false
+    t.string "start_time"
+    t.string "end_time"
+    t.string "departure_times", default: [], null: false, array: true
+    t.string "note"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["line_id", "start_date"], name: "index_service_schedule_exceptions_on_line_id_and_start_date"
+    t.check_constraint "end_date >= start_date", name: "service_schedule_exceptions_dates_check"
+  end
+
+  create_table "service_schedules", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "line_id", null: false
+    t.string "direction"
+    t.string "days", default: [], null: false, array: true
+    t.string "kind", null: false
+    t.string "start_time"
+    t.string "end_time"
+    t.string "departure_times", default: [], null: false, array: true
+    t.string "note"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["line_id", "direction"], name: "index_service_schedules_on_line_id_and_direction"
+  end
+
   create_table "stations", primary_key: "station_id", id: :string, force: :cascade do |t|
     t.string "name", null: false
     t.string "short_name", default: "", null: false
@@ -302,5 +334,7 @@ ActiveRecord::Schema[7.2].define(version: 36) do
   add_foreign_key "route_plan_events", "users"
   add_foreign_key "saved_routes", "users"
   add_foreign_key "service_areas", "lines", on_delete: :cascade
+  add_foreign_key "service_schedule_exceptions", "lines", on_delete: :cascade
+  add_foreign_key "service_schedules", "lines", on_delete: :cascade
   add_foreign_key "station_access_points", "stations", primary_key: "station_id", on_delete: :cascade, deferrable: :deferred
 end
