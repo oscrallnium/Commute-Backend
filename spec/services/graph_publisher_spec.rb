@@ -100,11 +100,54 @@ RSpec.describe GraphPublisher do
       expect(Edge.where(line: "OPST_RAIL").pluck(:bidirectional).uniq).to eq([false])
     end
 
-    it "refuses both ways on a line whose edges have a compass direction" do
+    it "keeps the compass direction of the edges when it sets one way" do
+      Edge.where(line: "OPST_ROAD").update_all(direction: "northbound", bidirectional: true)
+      expect_created(publish({ type: "line_direction", line_id: "OPST_ROAD", direction: "one_way" }))
+
+      expect(Edge.where(line: "OPST_ROAD").pluck(:bidirectional, :direction).uniq).to eq([[false, "northbound"]])
+    end
+
+    it "clears one compass direction and makes every edge two-way when it sets both ways" do
       Edge.where(line: "OPST_ROAD").update_all(direction: "northbound")
+      Line.find("OPST_ROAD").update!(direction: "one_way")
+      version = graph_version_now
+      expect_created(publish({ type: "line_direction", line_id: "OPST_ROAD", direction: "both" }))
+
+      expect(Line.find("OPST_ROAD").direction).to eq("both")
+      expect(Edge.where(line: "OPST_ROAD").pluck(:bidirectional, :direction).uniq).to eq([[true, nil]])
+      expect(graph_version_now).to eq(version + 1)
+    end
+
+    it "refuses both ways on a line whose edges have two compass directions" do
+      Edge.where(line: "OPST_ROAD").update_all(direction: "northbound")
+      Edge.where(edge_id: "OPST_ROAD_S2__OPST_ROAD_S3").update_all(direction: "southbound")
       result = publish({ type: "line_direction", line_id: "OPST_ROAD", direction: "both" })
 
       expect(result.status).to eq(:unprocessable_content)
+      expect(result.body[:errors].first).to include(field: "direction")
+      expect(result.body[:errors].first[:message]).to include("northbound and southbound")
+      expect(Edge.where(line: "OPST_ROAD").pluck(:direction).compact.uniq).to contain_exactly("northbound", "southbound")
+    end
+
+    it "refuses both ways while the line has a schedule row for one direction" do
+      Edge.where(line: "OPST_ROAD").update_all(direction: "northbound")
+      ServiceSchedule.create!(line_id: "OPST_ROAD", direction: "northbound", days: %w[mon], kind: "departures",
+                              departure_times: %w[05:00])
+      result = publish({ type: "line_direction", line_id: "OPST_ROAD", direction: "both" })
+
+      expect(result.status).to eq(:unprocessable_content)
+      expect(result.body[:errors].first[:message]).to include("northbound schedule rows")
+      expect(Edge.where(line: "OPST_ROAD").pluck(:direction).uniq).to eq(["northbound"])
+    end
+
+    it "sets both ways after a schedule clear for that direction in the same publish" do
+      Edge.where(line: "OPST_ROAD").update_all(direction: "northbound")
+      ServiceSchedule.create!(line_id: "OPST_ROAD", direction: "northbound", days: %w[mon], kind: "departures",
+                              departure_times: %w[05:00])
+      expect_created(publish({ type: "service_schedule_clear", line_id: "OPST_ROAD", direction: "northbound" },
+                             { type: "line_direction", line_id: "OPST_ROAD", direction: "both" }))
+
+      expect(Edge.where(line: "OPST_ROAD").pluck(:bidirectional, :direction).uniq).to eq([[true, nil]])
     end
 
     it "disables a line with a reason and clears the reason when it enables the line again" do

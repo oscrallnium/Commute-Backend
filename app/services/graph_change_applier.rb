@@ -35,18 +35,37 @@ class GraphChangeApplier
     nil
   end
 
-  # The line direction also sets `bidirectional` on every edge of the line.
+  # The line direction also sets `bidirectional` on every edge of the line. `both` also clears the
+  # compass `direction` of every edge, so it refuses a line that has two compass directions or
+  # schedule rows for one direction. See check_both_ways!.
   def apply_line_direction(c)
     line = line_for(c)
     refuse_service_area!(line, "It has no direction.")
     both = c["direction"] == "both"
-    if both && Edge.where(line: line.id).where.not(direction: nil).exists?
-      raise Rejected.new("Line '#{line.id}' has edges with a compass direction. Those edges cannot run both ways.",
+    check_both_ways!(line) if both
+    line.update!(direction: c["direction"])
+    attrs = { bidirectional: both, updated_at: Time.current }
+    attrs[:direction] = nil if both
+    Edge.where(line: line.id).update_all(attrs)
+    nil
+  end
+
+  # Two compass directions are two separate chains: two-way edges on both make duplicate routes.
+  # A schedule row for one direction matches no edge after the clear, so it must go first.
+  def check_both_ways!(line)
+    compass = Edge.where(line: line.id).where.not(direction: nil).distinct.order(:direction).pluck(:direction)
+    if compass.size > 1
+      raise Rejected.new("Line '#{line.id}' has #{compass.to_sentence} edges. Only a line with one compass " \
+                         "direction can run both ways. Delete the edges of the other directions first.",
                          field: "direction")
     end
-    line.update!(direction: c["direction"])
-    Edge.where(line: line.id).update_all(bidirectional: both, updated_at: Time.current)
-    nil
+
+    scheduled = (ServiceSchedule.where(line_id: line.id).where.not(direction: nil).distinct.pluck(:direction) +
+                 ServiceScheduleException.where(line_id: line.id).where.not(direction: nil).distinct.pluck(:direction)).uniq
+    return if scheduled.empty?
+
+    raise Rejected.new("Line '#{line.id}' has #{scheduled.sort.to_sentence} schedule rows or exceptions. Clear them, " \
+                       "or set them for every direction, before the line runs both ways.", field: "direction")
   end
 
   def apply_line_road_fare(c)

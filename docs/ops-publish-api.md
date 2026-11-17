@@ -324,7 +324,7 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 |---|---|---|
 | `line_name` | Line | `display_name` |
 | `line_color` | Line | `color_hex` |
-| `line_direction` | Line | `direction`, and `bidirectional` on every edge of the line |
+| `line_direction` | Line | `direction`, and `bidirectional` on every edge of the line. `"both"` also clears `direction` on every edge of the line. |
 | `line_enabled` | Line | `enabled`, `disabled_reason` |
 | `line_road_fare` | Line | `base_fare` and `fare_per_km` on every edge of the line, `base_km` on the line |
 | `line_rail_fares` | Line | The station-pair fare table of the line |
@@ -395,7 +395,9 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 
 Rules:
 
-- `line_direction`: `"both"` sets `bidirectional: true` on every edge of the line. `"one_way"` sets `bidirectional: false`. The server refuses `"both"` when any edge of the line has a compass `direction` (for example `northbound`).
+- `line_direction`: `"both"` sets `bidirectional: true` and clears the compass `direction` on every edge of the line. `"one_way"` sets `bidirectional: false` and keeps each edge `direction`.
+- The server refuses `"both"` when the edges of the line have two or more compass directions, for example `northbound` and `southbound`. Those edges are separate chains, and two-way chains would duplicate the route.
+- The server refuses `"both"` while the line has a `service_schedules` or `service_schedule_exceptions` row with a direction. Such a row matches no edge after the clear. Send `service_schedule_clear` or `service_exception_delete` for that direction first, in the same request or an earlier one.
 - `line_road_fare`: the road fare is `base_fare + max(0, km - base_km) * fare_per_km`. The server writes `base_fare` and `fare_per_km` to every edge whose `line` is the line, hidden edges included. It writes `base_km` to the line. It refuses a line whose mode is `train` or `walk`, and a line with no edges.
 - `line_rail_fares`: the line mode must be `train`. Every station in `station_ids` must have `line` equal to `line_id`. The table does not need every station of the line. `fares` has one row and one column for each station. The diagonal must be `null` or `0`; the server stores `null`. Every other cell needs a number. The change replaces the whole table. It does not change `fareMatrix`.
 - `line_delete`: see [DELETE /api/v1/admin/lines/:id](#delete-apiv1adminlinesid). The rules are the same, but the publish raises the version once for all its changes.
