@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 40) do
+ActiveRecord::Schema[7.2].define(version: 42) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -85,12 +85,16 @@ ActiveRecord::Schema[7.2].define(version: 40) do
     t.string "from_access_point_id"
     t.string "to_access_point_id"
     t.boolean "custom_path", default: false, null: false
+    t.string "toll_entry_plaza_id"
+    t.string "toll_exit_plaza_id"
     t.index ["from_access_point_id"], name: "index_edges_on_from_access_point_id"
     t.index ["from_station"], name: "index_edges_on_from_station"
     t.index ["line"], name: "index_edges_on_line"
     t.index ["mode"], name: "index_edges_on_mode"
     t.index ["to_access_point_id"], name: "index_edges_on_to_access_point_id"
     t.index ["to_station"], name: "index_edges_on_to_station"
+    t.index ["toll_entry_plaza_id"], name: "index_edges_on_toll_entry_plaza_id"
+    t.index ["toll_exit_plaza_id"], name: "index_edges_on_toll_exit_plaza_id"
   end
 
   create_table "fare_matrix", primary_key: "line_name", id: :string, force: :cascade do |t|
@@ -144,8 +148,10 @@ ActiveRecord::Schema[7.2].define(version: 40) do
     t.string "disabled_reason"
     t.decimal "base_km", precision: 6, scale: 2, default: "0.0", null: false
     t.string "direction", default: "both", null: false
+    t.integer "toll_load_factor"
     t.check_constraint "base_km >= 0::numeric", name: "lines_base_km_check"
-    t.check_constraint "direction::text = ANY (ARRAY['both'::character varying, 'one_way'::character varying]::text[])", name: "lines_direction_check"
+    t.check_constraint "direction::text = ANY (ARRAY['both'::character varying::text, 'one_way'::character varying::text])", name: "lines_direction_check"
+    t.check_constraint "toll_load_factor > 0", name: "lines_toll_load_factor_check"
   end
 
   create_table "payment_methods", id: :string, force: :cascade do |t|
@@ -194,23 +200,6 @@ ActiveRecord::Schema[7.2].define(version: 40) do
     t.index ["destination_station_id"], name: "index_saved_routes_on_destination_station_id"
     t.index ["origin_station_id"], name: "index_saved_routes_on_origin_station_id"
     t.index ["user_id"], name: "index_saved_routes_on_user_id"
-  end
-
-  create_table "station_access_points", primary_key: "access_point_id", id: :string, force: :cascade do |t|
-    t.string "station_id", null: false
-    t.string "name", default: "", null: false
-    t.string "kind", default: "both", null: false
-    t.string "direction"
-    t.decimal "lat", precision: 10, scale: 7, null: false
-    t.decimal "lng", precision: 10, scale: 7, null: false
-    t.integer "position", default: 0, null: false
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-    t.index ["station_id", "direction"], name: "index_station_access_points_on_station_id_and_direction"
-    t.index ["station_id"], name: "index_station_access_points_on_station_id"
-    t.check_constraint "direction IS NULL OR (direction::text = ANY (ARRAY['northbound'::character varying::text, 'southbound'::character varying::text, 'eastbound'::character varying::text, 'westbound'::character varying::text, 'inbound'::character varying::text, 'outbound'::character varying::text]))", name: "station_access_points_direction_check"
-    t.check_constraint "kind::text = ANY (ARRAY['entrance'::character varying::text, 'exit'::character varying::text, 'both'::character varying::text])", name: "station_access_points_kind_check"
-    t.check_constraint "lat >= '-90'::integer::numeric AND lat <= 90::numeric AND lng >= '-180'::integer::numeric AND lng <= 180::numeric", name: "station_access_points_coords_check"
   end
 
   create_table "service_areas", primary_key: "line_id", id: :string, force: :cascade do |t|
@@ -264,6 +253,23 @@ ActiveRecord::Schema[7.2].define(version: 40) do
     t.index ["line_id", "direction"], name: "index_service_schedules_on_line_id_and_direction"
   end
 
+  create_table "station_access_points", primary_key: "access_point_id", id: :string, force: :cascade do |t|
+    t.string "station_id", null: false
+    t.string "name", default: "", null: false
+    t.string "kind", default: "both", null: false
+    t.string "direction"
+    t.decimal "lat", precision: 10, scale: 7, null: false
+    t.decimal "lng", precision: 10, scale: 7, null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["station_id", "direction"], name: "index_station_access_points_on_station_id_and_direction"
+    t.index ["station_id"], name: "index_station_access_points_on_station_id"
+    t.check_constraint "direction IS NULL OR (direction::text = ANY (ARRAY['northbound'::character varying::text, 'southbound'::character varying::text, 'eastbound'::character varying::text, 'westbound'::character varying::text, 'inbound'::character varying::text, 'outbound'::character varying::text]))", name: "station_access_points_direction_check"
+    t.check_constraint "kind::text = ANY (ARRAY['entrance'::character varying::text, 'exit'::character varying::text, 'both'::character varying::text])", name: "station_access_points_kind_check"
+    t.check_constraint "lat >= '-90'::integer::numeric AND lat <= 90::numeric AND lng >= '-180'::integer::numeric AND lng <= 180::numeric", name: "station_access_points_coords_check"
+  end
+
   create_table "stations", primary_key: "station_id", id: :string, force: :cascade do |t|
     t.string "name", null: false
     t.string "short_name", default: "", null: false
@@ -288,6 +294,23 @@ ActiveRecord::Schema[7.2].define(version: 40) do
     t.index ["type"], name: "index_stations_on_type"
   end
 
+  create_table "toll_fares", force: :cascade do |t|
+    t.string "entry_plaza_id", null: false
+    t.string "exit_plaza_id", null: false
+    t.decimal "amount", precision: 8, scale: 2, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["entry_plaza_id", "exit_plaza_id"], name: "index_toll_fares_on_entry_plaza_id_and_exit_plaza_id", unique: true
+    t.check_constraint "amount >= 0::numeric", name: "toll_fares_amount_check"
+    t.check_constraint "entry_plaza_id::text <> exit_plaza_id::text", name: "toll_fares_distinct_plazas_check"
+  end
+
+  create_table "toll_plazas", id: :string, force: :cascade do |t|
+    t.string "name", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
   create_table "transport_modes", id: :string, force: :cascade do |t|
     t.string "display_name", null: false
     t.string "plural_name", default: "", null: false
@@ -304,7 +327,7 @@ ActiveRecord::Schema[7.2].define(version: 40) do
     t.integer "position", default: 0, null: false
     t.jsonb "extra", default: {}, null: false
     t.string "service_shape", default: "path", null: false
-    t.check_constraint "service_shape::text = ANY (ARRAY['path'::character varying, 'area'::character varying]::text[])", name: "transport_modes_service_shape_check"
+    t.check_constraint "service_shape::text = ANY (ARRAY['path'::character varying::text, 'area'::character varying::text])", name: "transport_modes_service_shape_check"
   end
 
   create_table "users", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -330,6 +353,8 @@ ActiveRecord::Schema[7.2].define(version: 40) do
   add_foreign_key "ar_world_maps", "users"
   add_foreign_key "edges", "station_access_points", column: "from_access_point_id", primary_key: "access_point_id", on_delete: :cascade, deferrable: :deferred
   add_foreign_key "edges", "station_access_points", column: "to_access_point_id", primary_key: "access_point_id", on_delete: :cascade, deferrable: :deferred
+  add_foreign_key "edges", "toll_plazas", column: "toll_entry_plaza_id"
+  add_foreign_key "edges", "toll_plazas", column: "toll_exit_plaza_id"
   add_foreign_key "graph_versions", "users", column: "published_by_id", on_delete: :nullify
   add_foreign_key "route_plan_events", "users"
   add_foreign_key "saved_routes", "users"
@@ -337,4 +362,6 @@ ActiveRecord::Schema[7.2].define(version: 40) do
   add_foreign_key "service_schedule_exceptions", "lines", on_delete: :cascade
   add_foreign_key "service_schedules", "lines", on_delete: :cascade
   add_foreign_key "station_access_points", "stations", primary_key: "station_id", on_delete: :cascade, deferrable: :deferred
+  add_foreign_key "toll_fares", "toll_plazas", column: "entry_plaza_id"
+  add_foreign_key "toll_fares", "toll_plazas", column: "exit_plaza_id"
 end

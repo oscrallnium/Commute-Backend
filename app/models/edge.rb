@@ -2,6 +2,9 @@ class Edge < ApplicationRecord
   self.primary_key        = "edge_id"
   self.inheritance_column = nil
 
+  belongs_to :toll_entry_plaza, class_name: "TollPlaza", optional: true
+  belongs_to :toll_exit_plaza, class_name: "TollPlaza", optional: true
+
   validates :edge_id, :from_station, :to_station, :line, :mode, presence: true
 
   def as_api_json

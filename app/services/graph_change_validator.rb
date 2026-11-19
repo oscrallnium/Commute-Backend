@@ -29,6 +29,10 @@ class GraphChangeValidator
     "line_rail_fares" => { required: { "line_id" => :reference_id, "station_ids" => :station_ids,
                                        "fares" => :fare_rows } },
     "line_delete" => { required: { "line_id" => :reference_id } },
+    "line_toll_load_factor" => { required: { "line_id" => :reference_id, "load_factor" => :load_factor } },
+    "toll_matrix" => { required: { "plazas" => :toll_plazas, "fares" => :toll_fares } },
+    "edge_toll" => { required: { "edge_id" => :reference_id, "entry_plaza_id" => :nullable_reference_id,
+                                 "exit_plaza_id" => :nullable_reference_id } },
     "stop_name" => { required: { "station_id" => :reference_id, "name" => :name } },
     "stop_short_name" => { required: { "station_id" => :reference_id, "short_name" => :short_name } },
     "stop_boarding" => { required: { "station_id" => :reference_id, "boarding" => :boarding } },
@@ -165,6 +169,7 @@ class GraphChangeValidator
   def check_type_rules(clean, index)
     case clean["type"]
     when "line_rail_fares" then check_fare_grid(clean, index)
+    when "toll_matrix" then check_toll_matrix(clean, index)
     when "access_point_update" then check_lat_lng_pair(clean, index)
     when "transfer_add" then check_transfer_ends(clean, index)
     when "service_exception_add" then check_exception_add(clean, index)
@@ -191,6 +196,24 @@ class GraphChangeValidator
                   i == j ? "A station has no fare to itself. Send null." : "Every station pair needs a fare.")
       end
     end
+  end
+
+  # Each fare must name two listed plazas that differ, and a pair must not repeat.
+  def check_toll_matrix(clean, index)
+    return unless clean["plazas"] && clean["fares"]
+
+    ids = clean["plazas"].pluck("id")
+    pairs = clean["fares"].map { |fare| fare.values_at("entry", "exit") }
+    fares_error = pairs.filter_map { |entry, exit_id| toll_pair_error(entry, exit_id, ids) }.first
+    fares_error ||= "must not list a pair twice." if pairs.uniq.length != pairs.length
+    add_error(index, clean["type"], "fares", "fares #{fares_error}") if fares_error
+  end
+
+  def toll_pair_error(entry, exit_id, ids)
+    return "must not have the same plaza as entry and exit." if entry == exit_id
+
+    unknown = [entry, exit_id].find { |id| ids.exclude?(id) }
+    "names plaza '#{unknown}', which is not in plazas." if unknown
   end
 
   def check_lat_lng_pair(clean, index)
@@ -275,6 +298,53 @@ class GraphChangeValidator
     else
       [nil, "must use uppercase letters, digits, and single underscores."]
     end
+  end
+
+  def clean_nullable_reference_id(value)
+    value.nil? ? [nil, nil] : clean_reference_id(value)
+  end
+
+  def clean_load_factor(value)
+    return [nil, nil] if value.nil?
+
+    whole = value.is_a?(Numeric) && value.finite? && value == value.to_i
+    whole && value.positive? ? [value.to_i, nil] : [nil, "must be a whole number greater than 0, or null."]
+  end
+
+  def clean_toll_plazas(value)
+    return [nil, "must be a list of plazas."] unless value.is_a?(Array)
+
+    plazas = value.map { |plaza| clean_toll_plaza(plaza) }
+    return [nil, "must hold only items with an id and a name."] unless plazas.all?
+    return [nil, "must not list a plaza twice."] unless plazas.pluck("id").uniq.length == plazas.length
+
+    [plazas, nil]
+  end
+
+  def clean_toll_plaza(plaza)
+    return unless plaza.is_a?(Hash) && plaza.keys.sort == %w[id name]
+
+    id = clean_new_id(plaza["id"])
+    name = clean_name(plaza["name"])
+    { "id" => id.first, "name" => name.first } if id.last.nil? && name.last.nil?
+  end
+
+  def clean_toll_fares(value)
+    return [nil, "must be a list of fares."] unless value.is_a?(Array)
+
+    fares = value.map { |fare| clean_toll_fare(fare) }
+    fares.all? ? [fares, nil] : [nil, "must hold only items with an entry, an exit, and an amount of 0 or more."]
+  end
+
+  def clean_toll_fare(fare)
+    return unless fare.is_a?(Hash) && fare.keys.sort == %w[amount entry exit]
+
+    entry = clean_reference_id(fare["entry"])
+    exit_id = clean_reference_id(fare["exit"])
+    amount = clean_non_negative(fare["amount"])
+    return unless [entry, exit_id, amount].all? { |_, message| message.nil? }
+
+    { "entry" => entry.first, "exit" => exit_id.first, "amount" => amount.first }
   end
 
   def clean_name(value)

@@ -51,11 +51,17 @@ class GraphPublisher
     raise Conflict unless meta.version == @base_version
 
     applier = GraphChangeApplier.new
-    @created = clean.each_with_index.filter_map { |change, index| apply_one(applier, change, index) }
+    @created = apply_order(clean).filter_map { |change, index| apply_one(applier, change, index) }
+                                 .sort_by { |created| created[:index] }
     GraphService.bump_version!
     meta.reload
     GraphVersion.create!(version: meta.version, published_at: meta.last_modified, published_by: @user,
                          change_list: clean, change_count: clean.length)
+  end
+
+  # The toll matrix applies first, so an edge_toll in the same publish can name a new plaza.
+  def apply_order(clean)
+    clean.each_with_index.sort_by { |change, index| [change["type"] == "toll_matrix" ? 0 : 1, index] }
   end
 
   # Writes the created ID into the change, so the history row holds the exact ID.

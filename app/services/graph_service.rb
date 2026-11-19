@@ -1168,6 +1168,7 @@ class GraphService
       peak: PeakHourConfig.first, fares: FareMatrix.all.to_a, rail_fares: RailFareTable.order(:line_id).to_a,
       lines: lines, stations: stations, edges: Edge.order(:line, :edge_id).to_a,
       service_areas: ServiceArea.order(:line_id).to_a,
+      toll_plazas: TollPlaza.order(:id).to_a, toll_fares: TollFare.all.to_a,
       schedules: ServiceSchedule.order(:line_id, :direction, :created_at).to_a,
       schedule_exceptions: current_schedule_exceptions.to_a,
       visibility: GraphVisibility.new(lines: lines, stations: stations)
@@ -1210,8 +1211,17 @@ class GraphService
       stations: stations,
       edges: edges,
       serviceSchedules: schedules,
-      serviceScheduleExceptions: schedule_exceptions
+      serviceScheduleExceptions: schedule_exceptions,
+      tollPlazas: source[:toll_plazas].map(&:as_graph_json),
+      tollFares: toll_fares_json(source[:toll_fares])
     }
+  end
+
+  # Nested by entry plaza, then exit plaza. The amount is a number.
+  def toll_fares_json(fares)
+    fares.each_with_object({}) do |fare, table|
+      (table[fare.entry_plaza_id] ||= {})[fare.exit_plaza_id] = fare.amount.to_f
+    end
   end
 
   # The rail fare table without the rows and columns of hidden stops.
@@ -1282,7 +1292,7 @@ class GraphService
 
   def line_json(l)
     h = { id: l.id, displayName: l.display_name, mode: l.mode, lastStopNumber: l.last_stop_number,
-          baseKm: l.base_km.to_f }
+          baseKm: l.base_km.to_f, tollLoadFactor: l.toll_load_factor }
     h[:colorHex] = l.color_hex if l.color_hex.present?
     h
   end
@@ -1329,6 +1339,8 @@ class GraphService
     h[:customPath] = true if e.custom_path
     h[:fromAccessPointId] = e.from_access_point_id if e.from_access_point_id
     h[:toAccessPointId] = e.to_access_point_id if e.to_access_point_id
+    h[:tollEntryPlaza] = e.toll_entry_plaza_id if e.toll_entry_plaza_id
+    h[:tollExitPlaza] = e.toll_exit_plaza_id if e.toll_exit_plaza_id
     h
   end
 end

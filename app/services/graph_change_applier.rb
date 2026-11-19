@@ -12,8 +12,9 @@ class GraphChangeApplier
 
   # Line changes that the reserved INTERCHANGE line refuses.
   INTERCHANGE_LOCKED_TYPES = %w[line_direction line_enabled line_road_fare line_rail_fares line_payments
-                                line_delete].freeze
+                                line_delete line_toll_load_factor].freeze
   NO_ROAD_FARE_MODES       = %w[train walk].freeze
+  NO_TOLL_MODES            = %w[train walk].freeze
   PAYMENT_METHOD_FIELDS    = %w[name sf_symbol color_hex is_default accepted_by_modes notes].freeze
 
   # Returns the ID of the row that an add change creates, or nil.
@@ -107,6 +108,15 @@ class GraphChangeApplier
     table.update!(station_ids: c["station_ids"], fares: c["fares"])
     nil
   end
+
+  def apply_line_toll_load_factor(c)
+    line = line_for(c)
+    refuse_toll_mode!(line.mode, "Line '#{line.id}'", "line_id")
+    line.update!(toll_load_factor: c["load_factor"])
+    nil
+  end
+
+  def apply_toll_matrix(c) = TollMatrixWriter.new.replace(c)
 
   def apply_line_delete(c)
     line_for(c)
@@ -252,6 +262,31 @@ class GraphChangeApplier
   def apply_edge_enabled(c)
     edge_for(c).update!(enabled: c["enabled"], disabled_reason: c["reason"])
     nil
+  end
+
+  def apply_edge_toll(c)
+    edge = edge_for(c)
+    if edge.line == Line::INTERCHANGE_ID
+      raise Rejected.new("Edge '#{edge.edge_id}' is on INTERCHANGE. It has no toll.", field: "edge_id")
+    end
+
+    refuse_toll_mode!(edge.mode, "Edge '#{edge.edge_id}'", "edge_id")
+    known_plaza!(c["entry_plaza_id"], "entry_plaza_id")
+    known_plaza!(c["exit_plaza_id"], "exit_plaza_id")
+    edge.update!(toll_entry_plaza_id: c["entry_plaza_id"], toll_exit_plaza_id: c["exit_plaza_id"])
+    nil
+  end
+
+  def refuse_toll_mode!(mode, subject, field)
+    return unless NO_TOLL_MODES.include?(mode)
+
+    raise Rejected.new("#{subject} has mode '#{mode}'. It has no toll.", field: field)
+  end
+
+  def known_plaza!(id, field)
+    return if id.nil? || TollPlaza.exists?(id)
+
+    raise Rejected.new("Toll plaza '#{id}' was not found.", field: field)
   end
 
   def edge_for(c)
