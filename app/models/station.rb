@@ -10,7 +10,7 @@ class Station < ApplicationRecord
            class_name: "StationAccessPoint", primary_key: :station_id,
            foreign_key: :station_id, dependent: :destroy
 
-  BOARDING_VALUES = %w[both alight_only].freeze
+  BOARDING_VALUES = %w[both alight_only board_only].freeze
 
   validates :station_id, :name, :line, :type, presence: true
   validates :boarding, inclusion: { in: BOARDING_VALUES }
