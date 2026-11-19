@@ -36,6 +36,7 @@ class GraphChangeValidator
     "stop_name" => { required: { "station_id" => :reference_id, "name" => :name } },
     "stop_short_name" => { required: { "station_id" => :reference_id, "short_name" => :short_name } },
     "stop_boarding" => { required: { "station_id" => :reference_id, "boarding" => :boarding } },
+    "stop_fare_km" => { required: { "station_id" => :reference_id, "fare_km" => :optional_non_negative } },
     "stop_hours" => { required: { "station_id" => :reference_id, "open" => :time, "close" => :time } },
     "stop_enabled" => { required: { "station_id" => :reference_id, **ENABLED_FIELDS } },
     "edge_travel_time" => { required: { "edge_id" => :reference_id, "travel_time_minutes" => :positive } },

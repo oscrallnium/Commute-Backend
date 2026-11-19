@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 42) do
+ActiveRecord::Schema[7.2].define(version: 43) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
@@ -288,10 +288,12 @@ ActiveRecord::Schema[7.2].define(version: 42) do
     t.string "boarding", default: "both", null: false
     t.boolean "enabled", default: true, null: false
     t.string "disabled_reason"
+    t.decimal "fare_km", precision: 7, scale: 2
     t.index ["line", "sequence"], name: "index_stations_on_line_and_sequence"
     t.index ["line"], name: "index_stations_on_line"
     t.index ["name"], name: "idx_stations_name_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["type"], name: "index_stations_on_type"
+    t.check_constraint "fare_km IS NULL OR fare_km >= 0::numeric", name: "stations_fare_km_check"
   end
 
   create_table "toll_fares", force: :cascade do |t|

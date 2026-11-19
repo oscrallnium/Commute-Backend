@@ -332,6 +332,7 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 | `stop_name` | Station | `name` |
 | `stop_short_name` | Station | `short_name` |
 | `stop_boarding` | Station | `boarding` |
+| `stop_fare_km` | Station | `fare_km` |
 | `stop_hours` | Station | `open_time`, `close_time` |
 | `stop_enabled` | Station | `enabled`, `disabled_reason` |
 | `edge_travel_time` | Edge | `travel_time_minutes` |
@@ -409,6 +410,7 @@ Rules:
 { "type": "stop_name", "station_id": "MRT_TAFT_AVE", "name": "Taft Avenue" }
 { "type": "stop_short_name", "station_id": "MRT_TAFT_AVE", "short_name": "TAFT" }
 { "type": "stop_boarding", "station_id": "AYALA_ALABANG_NB_S4", "boarding": "alight_only" }
+{ "type": "stop_fare_km", "station_id": "AYALA_ALABANG_NB_S4", "fare_km": 12.5 }
 { "type": "stop_hours", "station_id": "MRT_TAFT_AVE", "open": "04:30", "close": "22:30" }
 { "type": "stop_enabled", "station_id": "AYALA_ALABANG_NB_S4", "enabled": false, "reason": "Closed for road works" }
 ```
@@ -419,6 +421,7 @@ Rules:
 | `stop_name` | `name` | Name | Yes |
 | `stop_short_name` | `short_name` | Short name | Yes |
 | `stop_boarding` | `boarding` | `"both"` or `"alight_only"` | Yes |
+| `stop_fare_km` | `fare_km` | Number of 0 or more, or `null` | Yes (road stops only) |
 | `stop_hours` | `open`, `close` | Time | Yes, both |
 | `stop_enabled` | `enabled` | Bool | Yes |
 | | `reason` | Reason | Yes (send `null` for none) |

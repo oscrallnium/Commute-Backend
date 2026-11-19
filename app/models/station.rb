@@ -14,6 +14,7 @@ class Station < ApplicationRecord
 
   validates :station_id, :name, :line, :type, presence: true
   validates :boarding, inclusion: { in: BOARDING_VALUES }
+  validates :fare_km, numericality: { greater_than_or_equal_to: 0 }, allow_nil: true
 
   scope :search, lambda { |q|
     where("name ILIKE :q OR short_name ILIKE :q OR line ILIKE :q", q: "%#{q}%")
@@ -40,6 +41,7 @@ class Station < ApplicationRecord
       access_points: access_points.map(&:as_api_json)
     }
     json[:sequence] = sequence if sequence
+    json[:fare_km] = fare_km.to_f unless fare_km.nil?
     json
   end
 end

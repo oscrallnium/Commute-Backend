@@ -242,6 +242,13 @@ class GraphChangeApplier
   def apply_stop_name(c)       = stop_for(c).update!(name: c["name"]) && nil
   def apply_stop_short_name(c) = stop_for(c).update!(short_name: c["short_name"]) && nil
   def apply_stop_boarding(c)   = stop_for(c).update!(boarding: c["boarding"]) && nil
+  def apply_stop_fare_km(c)
+    stop = stop_for(c)
+    refuse_road_fare_mode!(stop.type, "Stop '#{stop.station_id}'")
+    stop.update!(fare_km: c["fare_km"])
+    nil
+  end
+
   def apply_stop_hours(c)      = stop_for(c).update!(open_time: c["open"], close_time: c["close"]) && nil
 
   def apply_stop_enabled(c)
@@ -275,6 +282,12 @@ class GraphChangeApplier
     known_plaza!(c["exit_plaza_id"], "exit_plaza_id")
     edge.update!(toll_entry_plaza_id: c["entry_plaza_id"], toll_exit_plaza_id: c["exit_plaza_id"])
     nil
+  end
+
+  def refuse_road_fare_mode!(type, subject)
+    return unless NO_ROAD_FARE_MODES.include?(type)
+
+    raise Rejected.new("#{subject} is a #{type} stop. Only road stops have a fare distance.", field: "station_id")
   end
 
   def refuse_toll_mode!(mode, subject, field)
