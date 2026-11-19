@@ -11,9 +11,9 @@ class GraphService
   EARTH_RADIUS_KM  = 6371.0
   MIN_TRAVEL_TIME  = 2.0 # minutes
   # Average speed in km/h per mode for an edge shorter than EXPRESS_GAP_KM.
-  SPEED_KMH_BY_MODE = { "bus" => 22.0, "jeepney" => 16.0, "tricycle" => 15.0, "train" => 30.0 }.freeze
+  SPEED_KMH_BY_MODE = { "bus" => 22.0, "jeepney" => 16.0, "modern_jeepney" => 16.0, "tricycle" => 15.0, "train" => 30.0 }.freeze
   DEFAULT_SPEED_KMH = 22.0
-  ROAD_MODES        = %w[bus jeepney tricycle uv_express].freeze
+  ROAD_MODES        = %w[bus jeepney modern_jeepney tricycle uv_express].freeze
   # A road edge at least EXPRESS_GAP_KM long runs on an expressway at EXPRESS_SPEED_KMH.
   EXPRESS_GAP_KM    = 5.0
   EXPRESS_SPEED_KMH = 45.0
@@ -114,6 +114,7 @@ class GraphService
     ActiveRecord::Base.transaction do
       # The line row is locked until commit, so two writers cannot take the same stop number.
       line_record = lock_line!(line_id, display_name: display_name, mode: mode)
+      label_existing_edges!(line_record, existing_direction_of(payload))
       last_stop_number = line_record.last_stop_number
 
       passes.each do |pass|
@@ -625,7 +626,7 @@ class GraphService
       # Not an outright rejection — this is also the path for adding the missing
       # direction to a route that already has a different one.
       # #existing_line_append_error decides which case it actually is.
-      append_error = existing_line_append_error(line_id, passes)
+      append_error = existing_line_append_error(line_id, passes, existing_direction_of(payload))
       errors << { field: "lineID", message: append_error } if append_error
     end
 
@@ -843,7 +844,7 @@ class GraphService
 
   def mk_type_for(mode)
     { "train" => "train", "bus" => "bus", "jeepney" => "automobile",
-      "e_jeepney" => "automobile", "tricycle" => "automobile",
+      "e_jeepney" => "automobile", "modern_jeepney" => "automobile", "tricycle" => "automobile",
       "uv_express" => "automobile" }.fetch(mode, "transit")
   end
 
@@ -943,16 +944,20 @@ class GraphService
   # concept of "add the missing direction" doesn't apply to them the same way, and
   # this tool isn't how train lines get authored anyway (they're seeded, not
   # admin-drawn).
-  def existing_line_append_error(line_id, passes)
+  def existing_line_append_error(line_id, passes, existing_direction = nil)
     existing_mode = Station.where(line: line_id).pick(:type)
     return "Train lines can't be extended via Add Route." if existing_mode == "train"
 
+    new_directions = passes.filter_map { |p| p[:direction] }
     existing_directions = Edge.where(line: line_id).distinct.pluck(:direction).compact
     if existing_directions.empty?
-      return "Line ID '#{line_id}' already exists (recorded without a direction) — pick a different Line ID."
+      return unlabeled_line_error(line_id, new_directions, existing_direction)
     end
 
-    new_directions = passes.filter_map { |p| p[:direction] }
+    if existing_direction.present? && !existing_directions.include?(existing_direction)
+      return "existingDirection '#{existing_direction}' does not match the directions of '#{line_id}' " \
+             "(#{existing_directions.join(", ")})."
+    end
     if new_directions.empty?
       return "Line ID '#{line_id}' already exists — pick a different Line ID, or record a new " \
              "direction (#{DIRECTION_TAGS.keys.join(", ")}) to add it to that route."
@@ -961,7 +966,42 @@ class GraphService
     colliding = new_directions & existing_directions
     return "#{colliding.first.capitalize} already exists for '#{line_id}'." if colliding.any?
 
-    nil # Genuinely new direction(s) for an existing, direction-using, non-train line — allow it.
+    nil
+  end
+
+  # The refusal for a line whose existing edges have no compass direction, or nil when the
+  # payload names a valid label for them and adds a different direction.
+  def unlabeled_line_error(line_id, new_directions, existing_direction)
+    tags = DIRECTION_TAGS.keys.join(", ")
+    if existing_direction.blank?
+      return "Line '#{line_id}' has no direction on its existing edges. " \
+             "Send existingDirection (#{tags}) to label them."
+    end
+    unless DIRECTION_TAGS.key?(existing_direction)
+      return "existingDirection must be one of #{tags}."
+    end
+    if new_directions.empty?
+      return "Line ID '#{line_id}' already exists — record a new direction (#{tags}) to add it to that route."
+    end
+    return unless new_directions.include?(existing_direction)
+
+    "existingDirection '#{existing_direction}' must differ from the directions of the new passes."
+  end
+
+  def existing_direction_of(payload)
+    (payload[:existingDirection] || payload["existingDirection"]).presence&.to_s
+  end
+
+  # Gives the edges of a line with no compass direction the direction named in the payload.
+  # It never renames an ID. It runs before the new edges exist.
+  def label_existing_edges!(line_record, existing_direction)
+    return if existing_direction.blank?
+
+    edges = Edge.where(line: line_record.id)
+    return unless edges.exists? && edges.where.not(direction: nil).none?
+
+    edges.update_all(direction: existing_direction, bidirectional: false, updated_at: Time.current)
+    line_record.update!(direction: "one_way")
   end
 
   # The chain of a generated stop id: the part before `_STOP<n>` or `_S<n>`. Returns nil for a
