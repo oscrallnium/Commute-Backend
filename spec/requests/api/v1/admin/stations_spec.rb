@@ -92,7 +92,7 @@ RSpec.describe "PATCH /api/v1/admin/stations/:id", type: :request do
     end
 
     it "returns 422 for an invalid value and keeps the stored value" do
-      patch_station(station: { boarding: "board_only" })
+      patch_station(station: { boarding: "pickup_only" })
       expect(response).to have_http_status(:unprocessable_entity)
       expect(station.reload.boarding).to eq("both")
     end

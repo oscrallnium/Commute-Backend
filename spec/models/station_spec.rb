@@ -17,7 +17,7 @@ RSpec.describe Station do
     end
   end
 
-  ["board_only", "", nil].each do |bad|
+  ["pickup_only", "", nil].each do |bad|
     it "rejects #{bad.inspect}" do
       station = build_station
       station.boarding = bad
