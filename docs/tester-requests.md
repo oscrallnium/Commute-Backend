@@ -108,6 +108,39 @@ end is empty.
 
 `invite`, `resend`, and `decline` return `{ "data": TesterRequest }`. An unknown id gives 404.
 
+## External testers
+
+These endpoints read and change the external beta group `ASC_BETA_GROUP_ID` in App Store
+Connect. The server keeps no copy of this list, so each call goes to Apple.
+
+| Method | Path | Success | Does |
+|---|---|---|---|
+| GET | `/api/v1/admin/beta_testers` | 200 | Lists every tester in the group. |
+| DELETE | `/api/v1/admin/beta_testers/:id` | 204 | Removes the tester from the group. The tester stays in other groups and apps. Tester requests do not change. |
+
+List response:
+
+```json
+{ "data": [{
+  "id": "App Store Connect beta tester ID",
+  "email": "string or null",
+  "firstName": "string or null",
+  "lastName": "string or null",
+  "inviteType": "EMAIL | PUBLIC_LINK | null",
+  "state": "string or null",
+  "testerRequestId": "uuid or null"
+}] }
+```
+
+`testerRequestId` is the tester request with the same `ascBetaTesterId`, or else with the same
+email. Apple gives no email for some public link testers.
+
+| Error | Status | Body |
+|---|---|---|
+| An `ASC_*` variable is missing | 503 | `{ "error": "App Store Connect is not configured", "message": "..." }` |
+| Network error or Apple HTTP 5xx | 503 | `{ "error": "App Store Connect is unavailable", "message": "..." }` |
+| Apple 4xx | 502 | `{ "error": "App Store Connect refused the request", "message": "..." }` |
+
 ## Live updates (Action Cable)
 
 | Item | Value |
@@ -143,6 +176,8 @@ process reuses it for 14 minutes.
 | Invite | `POST /v1/betaTesters` with the email, `firstName` and `lastName` from `name`, and the group `ASC_BETA_GROUP_ID`. |
 | Invite, Apple answers 409 | `GET /v1/betaTesters?filter[email]=...`, then `POST /v1/betaGroups/{id}/relationships/betaTesters`. |
 | Resend | `POST /v1/betaTesterInvitations` with the app `ASC_APP_ID` and the beta tester. |
+| List group | `GET /v1/betaGroups/{id}/betaTesters?limit=50`, then each `links.next`. |
+| Remove from group | `DELETE /v1/betaGroups/{id}/relationships/betaTesters` with the tester ID. |
 
 The name splits at the first space: `Juan Dela Cruz` gives `Juan` and `Dela Cruz`.
 

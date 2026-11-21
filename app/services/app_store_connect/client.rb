@@ -13,6 +13,7 @@ module AppStoreConnect
     ENV_KEYS = %w[ASC_ISSUER_ID ASC_KEY_ID ASC_PRIVATE_KEY ASC_APP_ID ASC_BETA_GROUP_ID].freeze
     TOKEN_LIFETIME = 19.minutes
     TOKEN_REUSE_LIMIT = 14.minutes
+    GROUP_PAGE_LIMIT = 50
 
     @token_cache = {}
     @token_mutex = Mutex.new
@@ -48,7 +49,44 @@ module AppStoreConnect
       raise_error(response) unless response.status == 201
     end
 
+    # Returns each tester in the beta group as { id:, email:, first_name:, last_name:, invite_type:, state: }.
+    # Follows Apple's `links.next` until the last page.
+    def list_group_testers
+      query = URI.encode_www_form("limit" => GROUP_PAGE_LIMIT)
+      path = "/v1/betaGroups/#{setting("ASC_BETA_GROUP_ID")}/betaTesters?#{query}"
+      testers = []
+      while path
+        response = request(:get, path)
+        raise_error(response) unless response.status == 200
+
+        body = parse(response)
+        testers.concat(body.fetch("data", []).map { |row| tester_summary(row) })
+        path = relative_path(body.dig("links", "next"))
+      end
+      testers
+    end
+
+    # Removes the tester from the beta group only. The tester keeps other groups and apps.
+    def remove_tester_from_group(tester_id:)
+      path = "/v1/betaGroups/#{setting("ASC_BETA_GROUP_ID")}/relationships/betaTesters"
+      response = request(:delete, path, body: { data: [{ type: "betaTesters", id: tester_id }] })
+      raise_error(response) unless response.status == 204
+    end
+
     private
+
+    def tester_summary(row)
+      attributes = row.fetch("attributes", {})
+      { id: row["id"], email: attributes["email"], first_name: attributes["firstName"],
+        last_name: attributes["lastName"], invite_type: attributes["inviteType"], state: attributes["state"] }
+    end
+
+    # Apple returns `links.next` as an absolute URL. A link to another host ends the loop.
+    def relative_path(url)
+      return nil if url.blank? || !url.start_with?(BASE_URL)
+
+      url.delete_prefix(BASE_URL)
+    end
 
     def new_tester_body(email, first_name, last_name)
       attributes = { email: email, firstName: first_name, lastName: last_name }.compact

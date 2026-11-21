@@ -85,6 +85,7 @@ Rails.application.routes.draw do
         post   "graph/routes",           to: "graph#create_route"
         delete "graph/routes/:line_id",  to: "graph#delete_route",
                constraints: { line_id: graph_id }, format: false
+        resources :beta_testers, only: %i[index destroy], constraints: { id: /[A-Za-z0-9-]+/ }
         resources :tester_requests, only: %i[index destroy] do
           member do
             post :invite
