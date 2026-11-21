@@ -39,20 +39,21 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
     ]
   end
 
-  def post_route(line_id:, pass:, mode: "jeepney")
+  # Pass `payments: nil` to leave acceptedPayments out of the body.
+  def post_route(line_id:, pass:, mode: "jeepney", payments: ["cash"])
     post "/api/v1/admin/graph/routes",
          params: {
            displayName: "Test #{line_id}", lineID: line_id, mode: mode,
            openTime: "05:00", closeTime: "22:00",
-           baseFare: 13.0, farePerKm: 1.8, acceptedPayments: ["cash"],
+           baseFare: 13.0, farePerKm: 1.8, acceptedPayments: payments,
            isAirConditioned: false, crowdFactor: 0.7, reliability: 0.65,
            passes: [pass]
-         }.to_json,
+         }.compact.to_json,
          headers: auth_headers_for(admin).merge("Content-Type" => "application/json")
   end
 
   after do
-    %w[IOS_ONEWAY IOS_LEGACY IOS_TWOWAY IOS_BAD IOS_DIR IOS_EW IOS_UV].each { |l| GraphService.delete_route(l) }
+    %w[IOS_ONEWAY IOS_LEGACY IOS_TWOWAY IOS_BAD IOS_DIR IOS_EW IOS_UV IOS_PAY].each { |l| GraphService.delete_route(l) }
   end
 
   context "the new iOS payload: direction-less and explicitly one-way" do
@@ -156,6 +157,40 @@ RSpec.describe "POST /api/v1/admin/graph/routes", type: :request do
                  pass: { direction: "east", isRoadSnapped: false, stops: circuit_stops })
       expect(response).to have_http_status(:unprocessable_content)
       expect(response.body).to include("eastbound", "westbound", "inbound", "outbound")
+    end
+  end
+
+  context "accepted payments" do
+    before do
+      PaymentMethod.find_or_create_by!(id: "pmpb_qr") { |p| p.display_name = "QR" }
+      TransportMode.where(id: "jeepney").update_all(default_accepted_payments: %w[cash pmpb_qr])
+    end
+
+    let(:eastbound) { { direction: "eastbound", isRoadSnapped: false, stops: circuit_stops } }
+    let(:westbound) { { direction: "westbound", isRoadSnapped: false, stops: circuit_stops } }
+
+    it "uses the default payments of the mode when the body leaves them out" do
+      post_route(line_id: "IOS_PAY", pass: eastbound, payments: nil)
+
+      expect(response).to have_http_status(:created)
+      expect(Edge.where(line: "IOS_PAY").pluck(:accepted_payments)).to all(eq(%w[cash pmpb_qr]))
+    end
+
+    it "uses the payments of the existing line when a new direction leaves them out" do
+      post_route(line_id: "IOS_PAY", pass: eastbound, payments: %w[pmpb_qr])
+      post_route(line_id: "IOS_PAY", pass: westbound, payments: nil)
+
+      expect(response).to have_http_status(:created)
+      expect(Edge.where(line: "IOS_PAY", direction: "westbound").pluck(:accepted_payments)).to all(eq(%w[pmpb_qr]))
+    end
+
+    it "rejects an empty list and an unknown payment method" do
+      post_route(line_id: "IOS_PAY", pass: eastbound, payments: [])
+      expect(response).to have_http_status(:unprocessable_content)
+      post_route(line_id: "IOS_PAY", pass: eastbound, payments: %w[cash pmpb_none])
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(response.body).to include("pmpb_none")
+      expect(Edge.where(line: "IOS_PAY")).to be_empty
     end
   end
 

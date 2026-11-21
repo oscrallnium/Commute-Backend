@@ -91,6 +91,39 @@ RSpec.describe GraphChangeValidator do
     expect(errors.pluck(:index)).to eq([0, 1])
   end
 
+  describe "payment fields" do
+    it "cleans a valid payment method add" do
+      clean, errors = validate({ type: "payment_method_add", payment_method_id: "mari_bank", name: " MariBank ",
+                                 color_hex: "#ff5722", accepted_by_modes: %w[jeepney], notes: " QR scan. " })
+
+      expect(errors).to be_empty
+      expect(clean.first).to include("name" => "MariBank", "color_hex" => "#FF5722", "notes" => "QR scan.")
+    end
+
+    it "rejects a new payment method ID that is not lowercase snake case" do
+      fields = %w[MariBank mari-bank _bank].map do |id|
+        errors_for({ type: "payment_method_add", payment_method_id: id, name: "Bank" }).first[:field]
+      end
+
+      expect(fields).to eq(%w[payment_method_id] * 3)
+    end
+
+    it "rejects a null color, repeated modes, and an update with no field" do
+      errors = errors_for({ type: "payment_method_update", payment_method_id: "cash", color_hex: nil },
+                          { type: "payment_method_update", payment_method_id: "cash", accepted_by_modes: %w[bus bus] },
+                          { type: "payment_method_update", payment_method_id: "cash" })
+
+      expect(errors.map { |e| [e[:index], e[:field]] }).to eq([[0, "color_hex"], [1, "accepted_by_modes"], [2, nil]])
+    end
+
+    it "rejects an empty payment list for a line and for a mode default" do
+      errors = errors_for({ type: "line_payments", line_id: "MRT3", accepted_payments: [] },
+                          { type: "mode_default_payments", mode_id: "train", accepted_payments: [] })
+
+      expect(errors.pluck(:field)).to eq(%w[accepted_payments accepted_payments])
+    end
+  end
+
   describe "service area fields" do
     let(:ring) { [{ lat: 14.5, lng: 121.0 }, { lat: 14.5, lng: 121.02 }, { lat: 14.52, lng: 121.01 }] }
     let(:terminal) { { name: " Gate ", lat: 14.51, lng: 121.01 } }
