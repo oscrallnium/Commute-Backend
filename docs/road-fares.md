@@ -33,3 +33,16 @@ measured distance.
 
 The fare km difference does not depend on the direction of travel, so one value serves both
 directions of a two-way line.
+
+## Fare distance step of a line
+
+A line can round the fare km up to the next multiple of a step before the distance fare formula
+uses it. A null or 0 step uses the exact fare km.
+
+| Item | Value |
+|---|---|
+| Column | `lines.fare_step_km` decimal(6,2) null, >= 0 |
+| Graph JSON | line key `fareStepKm`, a number or null |
+| Publish change | `line_road_fare`, optional `fare_step_km` (number >= 0, or null). An absent key keeps the value. |
+
+The server stores and sends the step. It does not compute fares.

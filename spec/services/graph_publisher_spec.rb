@@ -86,6 +86,23 @@ RSpec.describe GraphPublisher do
       expect(Line.find("OPST_ROAD").base_km).to eq(4)
     end
 
+    it "leaves fare_step_km unchanged when the change does not send it" do
+      Line.find("OPST_ROAD").update!(fare_step_km: 0.5)
+      expect_created(publish({ type: "line_road_fare", line_id: "OPST_ROAD", base_fare: 15, base_km: 4, fare_per_km: 2 }))
+
+      expect(Line.find("OPST_ROAD")).to have_attributes(base_km: 4, fare_step_km: 0.5)
+    end
+
+    it "sets fare_step_km to a value and to null" do
+      expect_created(publish({ type: "line_road_fare", line_id: "OPST_ROAD", base_fare: 15, base_km: 4,
+                               fare_per_km: 2, fare_step_km: 1 }))
+      expect(Line.find("OPST_ROAD").fare_step_km).to eq(1)
+
+      expect_created(publish({ type: "line_road_fare", line_id: "OPST_ROAD", base_fare: 15, base_km: 4,
+                               fare_per_km: 2, fare_step_km: nil }))
+      expect(Line.find("OPST_ROAD").fare_step_km).to be_nil
+    end
+
     it "refuses a road fare on a train line" do
       result = publish({ type: "line_road_fare", line_id: "OPST_RAIL", base_fare: 15, base_km: 4, fare_per_km: 2 })
 

@@ -17,6 +17,7 @@ class Line < ApplicationRecord
                         allow_nil: true
   validates :direction, inclusion: { in: DIRECTIONS }
   validates :base_km, numericality: { greater_than_or_equal_to: 0 }
+  validates :fare_step_km, numericality: { greater_than_or_equal_to: 0 }, allow_nil: true
   validates :toll_load_factor, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
 
   private

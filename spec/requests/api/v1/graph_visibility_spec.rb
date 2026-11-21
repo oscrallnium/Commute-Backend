@@ -19,9 +19,17 @@ RSpec.describe "GET /api/v1/graph visibility", type: :request do
 
   it "leaves out the ops fields" do
     data = public_graph
-    expect(data["lines"]["OPST_ROAD"].keys).to contain_exactly("id", "displayName", "mode", "lastStopNumber", "baseKm", "tollLoadFactor")
+    expect(data["lines"]["OPST_ROAD"].keys).to contain_exactly("id", "displayName", "mode", "lastStopNumber", "baseKm", "fareStepKm",
+                                                                 "tollLoadFactor")
     expect(data["stations"].find { |s| s["id"] == "OPST_ROAD_S1" }).not_to have_key("enabled")
     expect(data["edges"].find { |e| e["id"] == "OPST_ROAD_S1__OPST_ROAD_S2" }).not_to have_key("enabled")
+  end
+
+  it "sends fareStepKm as null or as a number" do
+    expect(public_graph["lines"]["OPST_ROAD"]["fareStepKm"]).to be_nil
+
+    Line.find("OPST_ROAD").update!(fare_step_km: 0.5)
+    expect(public_graph["lines"]["OPST_ROAD"]["fareStepKm"]).to eq(0.5)
   end
 
   it "hides a disabled line with its stops, edges, transfers, fare rows, and mode entry" do

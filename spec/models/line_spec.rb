@@ -22,4 +22,24 @@ RSpec.describe Line do
       expect(build_line(bad)).not_to be_valid
     end
   end
+
+  describe "fare_step_km" do
+    before { Line.create!(id: "STEP_T", display_name: "T", mode: "bus") }
+
+    it "stores null and a value of 0 or more" do
+      expect(Line.find("STEP_T").fare_step_km).to be_nil
+      expect { Line.where(id: "STEP_T").update_all(fare_step_km: 0) }.not_to raise_error
+      expect { Line.where(id: "STEP_T").update_all(fare_step_km: 0.5) }.not_to raise_error
+      expect(Line.find("STEP_T").fare_step_km).to eq(0.5)
+    end
+
+    it "has a check constraint that refuses a negative value" do
+      expect { Line.where(id: "STEP_T").update_all(fare_step_km: -1) }
+        .to raise_error(ActiveRecord::StatementInvalid, /lines_fare_step_km_check/)
+    end
+
+    it "refuses a negative value in validation" do
+      expect(Line.new(id: "STEP_U", display_name: "U", mode: "bus", fare_step_km: -0.1)).not_to be_valid
+    end
+  end
 end

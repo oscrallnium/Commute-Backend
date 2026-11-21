@@ -31,6 +31,17 @@ RSpec.describe GraphChangeValidator do
     )
   end
 
+  it "accepts fare_step_km on a road fare as absent, null, or 0 or more, and refuses a negative value" do
+    base = { type: "line_road_fare", line_id: "L", base_fare: 13, base_km: 4, fare_per_km: 1.8 }
+    clean, errors = validate(base, base.merge(fare_step_km: nil), base.merge(fare_step_km: 1))
+
+    expect(errors).to be_empty
+    expect(clean[0]).not_to have_key("fare_step_km")
+    expect(clean[1]).to include("fare_step_km" => nil)
+    expect(clean[2]).to include("fare_step_km" => 1.0)
+    expect(errors_for(base.merge(fare_step_km: -1)).first).to include(field: "fare_step_km")
+  end
+
   it "rejects a number sent as a string" do
     errors = errors_for({ type: "edge_travel_time", edge_id: "E", travel_time_minutes: "5" })
 
