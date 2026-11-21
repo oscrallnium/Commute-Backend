@@ -1,0 +1,13 @@
+# The postgresql adapter uses LISTEN and NOTIFY on the app database. It needs a direct
+# or session-mode connection; a transaction-mode pooler drops LISTEN.
+development:
+  adapter: postgresql
+
+test:
+  adapter: test
+
+staging:
+  adapter: postgresql
+
+production:
+  adapter: postgresql

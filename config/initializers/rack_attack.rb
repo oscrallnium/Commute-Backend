@@ -29,6 +29,13 @@ class Rack::Attack
   end
 
   # ── Response ───────────────────────────────────────────────────────────────
+  # The Pages Function puts the browser IP first in X-Forwarded-For. Proxies append after it.
+  throttle("tester_requests/ip", limit: 5, period: 1.hour) do |req|
+    if req.path == "/api/v1/tester_requests" && req.post?
+      req.get_header("HTTP_X_FORWARDED_FOR").to_s.split(",").first.to_s.strip.presence || req.ip
+    end
+  end
+
   self.throttled_responder = lambda do |_req|
     [
       429,

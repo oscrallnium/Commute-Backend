@@ -16,6 +16,7 @@ The service does not compute routes. A* runs on the device. The app routes with 
 | [Backend Internals](backend.md) | Where does the logic live, how do caching and deploys work, and which defects are known? |
 | [API Reference](api-reference.md) | What are all routes, their auth, bodies, responses, errors, and rate limits? |
 | [Ops Publish API](ops-publish-api.md) | How does the ops dashboard read the admin graph, publish changes, and read history? |
+| [Tester Requests API](tester-requests.md) | How do the website form, the dashboard, and App Store Connect handle TestFlight tester requests? |
 | [Graph Sync](graph-sync.md) | How does the app download the graph, and which writes raise the graph version? |
 | [Security](security.md) | How do authentication, roles, rate limits, CORS, validation, and secrets work, and which gaps remain? |
 | [Agent Guide](agent-guide.md) | Where do I edit to change X, which rules must hold, and how do I run specs and deploy safely? |

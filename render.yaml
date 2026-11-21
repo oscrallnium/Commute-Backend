@@ -33,6 +33,19 @@ services:
         sync: false
       - key: BOOTSTRAP_DEV_PASSWORD
         sync: false
+      # Tester requests. See docs/tester-requests.md.
+      - key: TESTER_FORM_KEY
+        sync: false
+      - key: ASC_ISSUER_ID
+        sync: false
+      - key: ASC_KEY_ID
+        sync: false
+      - key: ASC_PRIVATE_KEY
+        sync: false
+      - key: ASC_APP_ID
+        sync: false
+      - key: ASC_BETA_GROUP_ID
+        sync: false
       - key: SUPABASE_S3_ENDPOINT
         sync: false
       - key: SUPABASE_S3_ACCESS_KEY

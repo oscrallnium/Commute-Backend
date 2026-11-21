@@ -11,6 +11,11 @@ module CommutebehApi
 
     config.active_job.queue_adapter = :sidekiq
 
+    # config/routes.rb mounts Action Cable. Clients send a JWT, not a cookie, so the
+    # Origin check adds no protection, and the macOS client sends no Origin header.
+    config.action_cable.mount_path = nil
+    config.action_cable.disable_request_forgery_protection = true
+
     config.middleware.use ActionDispatch::Flash
 
     # Default timezone: Manila

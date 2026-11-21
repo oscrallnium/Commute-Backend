@@ -10,8 +10,9 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 44) do
+ActiveRecord::Schema[7.2].define(version: 45) do
   # These are extensions that must be enabled in order to support this database
+  enable_extension "citext"
   enable_extension "pg_trgm"
   enable_extension "pgcrypto"
   enable_extension "plpgsql"
@@ -296,6 +297,26 @@ ActiveRecord::Schema[7.2].define(version: 44) do
     t.index ["name"], name: "idx_stations_name_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["type"], name: "index_stations_on_type"
     t.check_constraint "fare_km IS NULL OR fare_km >= 0::numeric", name: "stations_fare_km_check"
+  end
+
+  create_table "tester_requests", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "name"
+    t.integer "age", null: false
+    t.string "location", null: false
+    t.citext "email", null: false
+    t.string "status", default: "pending", null: false
+    t.datetime "consent_at", null: false
+    t.string "source", default: "website", null: false
+    t.string "asc_beta_tester_id"
+    t.datetime "invited_at"
+    t.uuid "invited_by_id"
+    t.text "last_error"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["email"], name: "index_tester_requests_on_email", unique: true
+    t.index ["status", "created_at"], name: "index_tester_requests_on_status_and_created_at"
+    t.check_constraint "age >= 16", name: "tester_requests_age_check"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'inviting'::character varying, 'invited'::character varying, 'failed'::character varying, 'declined'::character varying]::text[])", name: "tester_requests_status_check"
   end
 
   create_table "toll_fares", force: :cascade do |t|

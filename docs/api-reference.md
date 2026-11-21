@@ -62,6 +62,7 @@ An error response has an `error` string. It can also have an `errors` array of s
 | `auth/email` | 5 per 5 min | Lower-case `user.email` | `POST /auth/sign_in` (see [Security](security.md#rackattack)) |
 | `api/ip` | 60 per 1 min | IP address | Paths that start with `/api/` |
 | `analytics/user` | 30 per 1 min | Last word of the `Authorization` header | `POST /api/v1/analytics/route_plan` |
+| `tester_requests/ip` | 5 per 1 hour | First address in `X-Forwarded-For`, else the IP address | `POST /api/v1/tester_requests` (see [Tester Requests API](tester-requests.md)) |
 
 A route under `/api/` counts against `api/ip` in addition to any other limit. `GET /health` has no limit.
 

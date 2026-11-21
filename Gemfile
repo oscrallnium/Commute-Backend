@@ -10,6 +10,7 @@ gem "rails", "~> 7.1"
 gem "bcrypt", "~> 3.1.7"
 gem "devise"
 gem "devise-jwt"
+gem "jwt", "~> 3.0" # App Store Connect API tokens (ES256)
 
 # Serialization
 gem "jsonapi-serializer"

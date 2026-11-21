@@ -2,6 +2,9 @@ Rails.application.routes.draw do
   # Health check — no auth, used by Railway + UptimeRobot
   get "/health", to: "health#show"
 
+  # Admin live updates. ApplicationCable::Connection checks the admin token.
+  mount ActionCable.server => "/cable"
+
   devise_for :users,
              path: "",
              path_names: { sign_in: "auth/sign_in", sign_out: "auth/sign_out", registration: "auth/register" },
@@ -55,6 +58,9 @@ Rails.application.routes.draw do
       # ── Incidents (community-reported service disruptions) ────────────────────
       resources :incidents, only: %i[index create]
 
+      # ── Tester requests (website form through the Pages Function) ────────────
+      resources :tester_requests, only: %i[create]
+
       # ── Explore tab ───────────────────────────────────────────────────────────
       resources :places, only: %i[index show]
       resources :events, only: %i[index show]
@@ -79,6 +85,13 @@ Rails.application.routes.draw do
         post   "graph/routes",           to: "graph#create_route"
         delete "graph/routes/:line_id",  to: "graph#delete_route",
                constraints: { line_id: graph_id }, format: false
+        resources :tester_requests, only: %i[index destroy] do
+          member do
+            post :invite
+            post :resend
+            post :decline
+          end
+        end
         get    "settings",               to: "settings#show"
         patch  "settings",               to: "settings#update"
       end

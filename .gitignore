@@ -12,3 +12,7 @@ gems/
 extensions/
 plugins/
 specifications/
+
+# Log files and rotated logs
+/log/*
+!/log/.keep
