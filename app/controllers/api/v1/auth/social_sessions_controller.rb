@@ -9,7 +9,7 @@ module Api
         # POST /api/v1/auth/social
         def create
           user = SocialSignInService.new.call(**sign_in_params)
-          json_response(token: issue_token(user), user: user_payload(user))
+          json_response({ token: issue_token(user), user: user_payload(user) })
         rescue SocialAuth::InvalidTokenError
           render json: { error: "Invalid token" }, status: :unauthorized
         rescue SocialSignInService::UnsupportedProviderError => e
