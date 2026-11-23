@@ -20,7 +20,7 @@ RSpec.describe "GET /api/v1/graph visibility", type: :request do
   it "leaves out the ops fields" do
     data = public_graph
     expect(data["lines"]["OPST_ROAD"].keys).to contain_exactly("id", "displayName", "mode", "lastStopNumber", "baseKm", "fareStepKm",
-                                                                 "tollLoadFactor")
+                                                                 "fareKmRounding", "tollLoadFactor")
     expect(data["stations"].find { |s| s["id"] == "OPST_ROAD_S1" }).not_to have_key("enabled")
     expect(data["edges"].find { |e| e["id"] == "OPST_ROAD_S1__OPST_ROAD_S2" }).not_to have_key("enabled")
   end
