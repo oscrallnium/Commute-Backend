@@ -33,6 +33,7 @@ module Api
 
         # DELETE /api/v1/auth/account  — App Store compliance
         def destroy
+          SocialAuth::AppleTokenRevocation.new.call(current_user)
           current_user.destroy!
           render json: { message: "Account deleted successfully" }, status: :ok
         rescue => e

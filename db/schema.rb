@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 45) do
+ActiveRecord::Schema[7.2].define(version: 47) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "citext"
   enable_extension "pg_trgm"
@@ -355,6 +355,19 @@ ActiveRecord::Schema[7.2].define(version: 45) do
     t.check_constraint "service_shape::text = ANY (ARRAY['path'::character varying::text, 'area'::character varying::text])", name: "transport_modes_service_shape_check"
   end
 
+  create_table "user_identities", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "user_id", null: false
+    t.integer "provider", null: false
+    t.string "uid", null: false
+    t.string "email"
+    t.text "apple_refresh_token"
+    t.boolean "email_relay_enabled"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["provider", "uid"], name: "index_user_identities_on_provider_and_uid", unique: true
+    t.index ["user_id", "provider"], name: "index_user_identities_on_user_id_and_provider", unique: true
+  end
+
   create_table "users", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.string "email", default: "", null: false
     t.string "encrypted_password", default: "", null: false
@@ -381,7 +394,7 @@ ActiveRecord::Schema[7.2].define(version: 45) do
   add_foreign_key "edges", "toll_plazas", column: "toll_entry_plaza_id"
   add_foreign_key "edges", "toll_plazas", column: "toll_exit_plaza_id"
   add_foreign_key "graph_versions", "users", column: "published_by_id", on_delete: :nullify
-  add_foreign_key "route_plan_events", "users"
+  add_foreign_key "route_plan_events", "users", on_delete: :nullify
   add_foreign_key "saved_routes", "users"
   add_foreign_key "service_areas", "lines", on_delete: :cascade
   add_foreign_key "service_schedule_exceptions", "lines", on_delete: :cascade
@@ -389,4 +402,5 @@ ActiveRecord::Schema[7.2].define(version: 45) do
   add_foreign_key "station_access_points", "stations", primary_key: "station_id", on_delete: :cascade, deferrable: :deferred
   add_foreign_key "toll_fares", "toll_plazas", column: "entry_plaza_id"
   add_foreign_key "toll_fares", "toll_plazas", column: "exit_plaza_id"
+  add_foreign_key "user_identities", "users", on_delete: :cascade
 end

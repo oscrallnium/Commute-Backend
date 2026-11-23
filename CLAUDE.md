@@ -33,7 +33,7 @@ It does **not**:
 | File storage | Active Storage → Supabase Storage (S3-compatible) |
 | Background jobs | Sidekiq + Redis |
 | Rate limiting | Rack::Attack |
-| Deploy | Koyeb (compute) + Supabase (Postgres + Storage) |
+| Deploy | Render (compute, `render.yaml`) + Supabase (Postgres + Storage) |
 
 ---
 
@@ -72,6 +72,7 @@ app/controllers/
 
 app/models/
   user.rb           — Devise + JWT, role enum
+  user_identity.rb  — Apple or Google identity of a user; Apple refresh token encrypted
   station.rb        — TEXT PK (station_id), maps to Hono-seeded stations table
   edge.rb           — TEXT PK (edge_id), maps to Hono-seeded edges table
   saved_route.rb
@@ -88,6 +89,7 @@ db/migrate/
   006 — create_incidents
   007 — create_active_storage_tables
   008 — add_trgm_search_indexes
+  046 — create_user_identities
 ```
 
 ---
@@ -111,8 +113,21 @@ POST /api/v1/auth/refresh
 
 DELETE /api/v1/auth/account          # App Store compliance
   Authorization: Bearer <token>
-  → 200  { message }
+  → 200  { message }                 # revokes the Apple refresh token first
+
+POST /api/v1/auth/social             # iOS only
+  { provider: "apple" | "google", id_token, nonce, authorization_code, full_name }
+  → 200  { data: { token, user } }   # 401 bad token, 422 invalid user
+
+POST /api/v1/auth/apple/notifications   # Apple server-to-server events
+  { payload: "<JWS>" }
+  → 200  {}                          # 400 bad signature
 ```
+
+Social sign-in verifies the provider ID token in `app/services/social_auth/`.
+`SocialSignInService` finds the user by `user_identities` `[provider, uid]`, then by a verified
+email, and creates a user when neither matches. A social user who has no password signs in
+only through the provider.
 
 ---
 
@@ -126,6 +141,8 @@ DELETE /api/v1/auth/account          # App Store compliance
 | DELETE | /auth/sign_out | Bearer | Logout (JTI revoked) |
 | POST | /api/v1/auth/refresh | Bearer | Rotate token |
 | DELETE | /api/v1/auth/account | Bearer | Delete account |
+| POST | /api/v1/auth/social | None | Apple or Google ID token → JWT |
+| POST | /api/v1/auth/apple/notifications | Apple JWS | Apple account events |
 | GET | /api/v1/me | Bearer | Current user profile |
 | PATCH | /api/v1/me | Bearer | Update display_name, home_station_id |
 | GET | /api/v1/graph/version | None | Graph staleness check |
@@ -404,13 +421,15 @@ bundle exec sidekiq  # Background worker
 
 ---
 
-## Deploy to Koyeb + Supabase
+## Deploy to Render + Supabase
 
-1. Create Supabase project → copy `DATABASE_URL`
-2. Create Supabase Storage bucket `commute-navigator-maps`
-3. Deploy to Koyeb from GitHub
-4. Set all env vars from `.env.example` in Koyeb dashboard
-5. `railway.toml` runs `db:migrate` automatically on deploy
+1. Create a Supabase project and copy its `DATABASE_URL`.
+2. Create the Supabase Storage bucket `commute-navigator-maps`.
+3. Deploy the `commutebeh-rails` service from GitHub with the Render Blueprint in `render.yaml`.
+4. Set each `sync: false` key from `render.yaml` in the Render dashboard.
+5. The `preDeployCommand` in `render.yaml` runs `rails db:migrate` before each deploy.
+
+Add each new ENV key to `.env.example` and to `render.yaml`.
 
 ---
 

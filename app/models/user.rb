@@ -10,11 +10,25 @@ class User < ApplicationRecord
   belongs_to :home_station, class_name: "Station", optional: true, primary_key: :station_id
   has_many :saved_routes, dependent: :destroy
   has_many :ar_world_maps, dependent: :nullify
+  has_many :user_identities, dependent: :destroy
 
   validates :display_name, presence: true, length: { maximum: 60 }
   validates :email, presence: true, uniqueness: { case_sensitive: false }
 
   def admin?
     role == "admin"
+  end
+
+  def password_set?
+    encrypted_password.present?
+  end
+
+  protected
+
+  # A user with an identity and no password does not need one.
+  def password_required?
+    return false if !password_set? && user_identities.any?
+
+    super
   end
 end

@@ -18,6 +18,16 @@ class Rack::Attack
     req.params["user"]&.dig("email").to_s.downcase.presence if req.path == "/auth/sign_in" && req.post?
   end
 
+  # Social sign-in — 10 attempts per 20 seconds per IP
+  throttle("auth_social/ip", limit: 10, period: 20) do |req|
+    req.ip if req.path == "/api/v1/auth/social" && req.post?
+  end
+
+  # Apple server notifications — 60 per minute per IP
+  throttle("apple_notifications/ip", limit: 60, period: 1.minute) do |req|
+    req.ip if req.path == "/api/v1/auth/apple/notifications" && req.post?
+  end
+
   # API — 60 requests per minute per IP
   throttle("api/ip", limit: 60, period: 1.minute) do |req|
     req.ip if req.path.start_with?("/api/")

@@ -27,6 +27,8 @@ Rails.application.routes.draw do
       # ── Auth extras ──────────────────────────────────────────────────────────
       post   "auth/refresh",         to: "auth/sessions#refresh"
       delete "auth/account",         to: "auth/registrations#destroy" # App Store requirement
+      post   "auth/social",          to: "auth/social_sessions#create"
+      post   "auth/apple/notifications", to: "auth/apple_notifications#create"
 
       # ── Current user ─────────────────────────────────────────────────────────
       get    "me",                   to: "users#me"
