@@ -326,7 +326,7 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 | `line_color` | Line | `color_hex` |
 | `line_direction` | Line | `direction`, and `bidirectional` on every edge of the line. `"both"` also clears `direction` on every edge of the line. |
 | `line_enabled` | Line | `enabled`, `disabled_reason` |
-| `line_road_fare` | Line | `base_fare` and `fare_per_km` on every edge of the line, `base_km` and `fare_step_km` on the line |
+| `line_road_fare` | Line | `base_fare` and `fare_per_km` on every edge of the line, `base_km`, `fare_step_km`, and `fare_km_rounding` on the line |
 | `line_rail_fares` | Line | The station-pair fare table of the line |
 | `line_delete` | Line | Deletes the line |
 | `stop_name` | Station | `name` |
@@ -370,7 +370,7 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 { "type": "line_direction", "line_id": "GUADALUPE_BUENDIA", "direction": "one_way" }
 { "type": "line_enabled", "line_id": "UPLB_KANAN", "enabled": false, "reason": "Route suspended" }
 { "type": "line_road_fare", "line_id": "KAYAMANAN_C_PRC", "base_fare": 14, "base_km": 4, "fare_per_km": 1.8 }
-{ "type": "line_road_fare", "line_id": "KAYAMANAN_C_PRC", "base_fare": 14, "base_km": 4, "fare_per_km": 1.8, "fare_step_km": 1 }
+{ "type": "line_road_fare", "line_id": "KAYAMANAN_C_PRC", "base_fare": 14, "base_km": 4, "fare_per_km": 1.8, "fare_step_km": 1, "fare_km_rounding": "down" }
 { "type": "line_rail_fares", "line_id": "LRT2", "station_ids": ["LRT2_RECTO", "LRT2_LEGARDA"], "fares": [[null, 15], [15, null]] }
 { "type": "line_delete", "line_id": "STA_CRUZ_BUENDIA" }
 ```
@@ -391,6 +391,7 @@ For each `*_enabled` change: when `enabled` is `true`, the server stores `reason
 | | `base_km` | Number ≥ 0 | Yes |
 | | `fare_per_km` | Number ≥ 0 | Yes |
 | | `fare_step_km` | Number ≥ 0 or `null` | No. When absent, the server keeps the current value. |
+| | `fare_km_rounding` | `"up"`, `"down"`, or `null` | No. When absent, the server keeps the current value. |
 | `line_rail_fares` | `line_id` | ID | Yes |
 | | `station_ids` | Array of ID, two or more, no repeats | Yes |
 | | `fares` | Array of rows. Each row is an array of Number ≥ 0 or `null`. | Yes |

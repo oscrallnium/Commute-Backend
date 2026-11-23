@@ -1292,7 +1292,8 @@ class GraphService
 
   def line_json(l)
     h = { id: l.id, displayName: l.display_name, mode: l.mode, lastStopNumber: l.last_stop_number,
-          baseKm: l.base_km.to_f, fareStepKm: l.fare_step_km&.to_f, tollLoadFactor: l.toll_load_factor }
+          baseKm: l.base_km.to_f, fareStepKm: l.fare_step_km&.to_f, fareKmRounding: l.fare_km_rounding,
+          tollLoadFactor: l.toll_load_factor }
     h[:colorHex] = l.color_hex if l.color_hex.present?
     h
   end

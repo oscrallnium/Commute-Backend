@@ -26,7 +26,8 @@ class GraphChangeValidator
     "line_enabled" => { required: { "line_id" => :reference_id, **ENABLED_FIELDS } },
     "line_road_fare" => { required: { "line_id" => :reference_id, "base_fare" => :non_negative,
                                       "base_km" => :non_negative, "fare_per_km" => :non_negative },
-                          optional: { "fare_step_km" => :optional_non_negative } },
+                          optional: { "fare_step_km" => :optional_non_negative,
+                                      "fare_km_rounding" => :optional_fare_km_rounding } },
     "line_rail_fares" => { required: { "line_id" => :reference_id, "station_ids" => :station_ids,
                                        "fares" => :fare_rows } },
     "line_delete" => { required: { "line_id" => :reference_id } },
@@ -412,6 +413,11 @@ class GraphChangeValidator
   end
 
   def clean_line_direction(value) = enum(value, Line::DIRECTIONS)
+
+  def clean_optional_fare_km_rounding(value)
+    value.nil? ? [nil, nil] : enum(value, Line::FARE_KM_ROUNDINGS)
+  end
+
   def clean_boarding(value) = enum(value, Station::BOARDING_VALUES)
   def clean_access_kind(value) = enum(value, StationAccessPoint::KINDS)
 

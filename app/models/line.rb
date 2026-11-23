@@ -1,10 +1,13 @@
 class Line < ApplicationRecord
-  COLOR_HEX_FORMAT = /\A#[0-9A-F]{6}\z/
-  DIRECTIONS       = %w[both one_way].freeze
-  INTERCHANGE_ID   = "INTERCHANGE".freeze
+  COLOR_HEX_FORMAT  = /\A#[0-9A-F]{6}\z/
+  DIRECTIONS        = %w[both one_way].freeze
+  FARE_KM_ROUNDINGS = %w[up down].freeze
+  INTERCHANGE_ID    = "INTERCHANGE".freeze
 
   self.primary_key = "id"
   self.table_name  = "lines"
+
+  enum :fare_km_rounding, FARE_KM_ROUNDINGS.index_with(&:itself), prefix: true, validate: { allow_nil: true }
 
   has_one :service_area, foreign_key: :line_id, primary_key: :id, inverse_of: :line
   has_many :service_schedules, foreign_key: :line_id, primary_key: :id, inverse_of: :line,

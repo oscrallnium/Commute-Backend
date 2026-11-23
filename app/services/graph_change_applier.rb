@@ -80,7 +80,7 @@ class GraphChangeApplier
     raise Rejected.new("Line '#{line.id}' has no edges to carry the fare.", field: "line_id") unless edges.exists?
 
     edges.update_all(base_fare: c["base_fare"], fare_per_km: c["fare_per_km"], updated_at: Time.current)
-    line.update!(c.slice("base_km", "fare_step_km"))
+    line.update!(c.slice("base_km", "fare_step_km", "fare_km_rounding"))
     nil
   end
 

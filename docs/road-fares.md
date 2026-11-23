@@ -45,4 +45,15 @@ uses it. A null or 0 step uses the exact fare km.
 | Graph JSON | line key `fareStepKm`, a number or null |
 | Publish change | `line_road_fare`, optional `fare_step_km` (number >= 0, or null). An absent key keeps the value. |
 
-The server stores and sends the step. It does not compute fares.
+## Fare km rounding of a line
+
+A line sets how the app rounds a part step of fare km. `"up"` counts the part step. `"down"` drops it.
+A null value means `"up"`.
+
+| Item | Value |
+|---|---|
+| Column | `lines.fare_km_rounding` string null, one of `up` or `down` |
+| Graph JSON | line key `fareKmRounding`, a string or null |
+| Publish change | `line_road_fare`, optional `fare_km_rounding` (`"up"`, `"down"`, or null). An absent key keeps the value. |
+
+The server stores and sends both values. It does not compute fares.

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 47) do
+ActiveRecord::Schema[7.2].define(version: 48) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "citext"
   enable_extension "pg_trgm"
@@ -151,8 +151,10 @@ ActiveRecord::Schema[7.2].define(version: 47) do
     t.string "direction", default: "both", null: false
     t.integer "toll_load_factor"
     t.decimal "fare_step_km", precision: 6, scale: 2
+    t.string "fare_km_rounding"
     t.check_constraint "base_km >= 0::numeric", name: "lines_base_km_check"
     t.check_constraint "direction::text = ANY (ARRAY['both'::character varying::text, 'one_way'::character varying::text])", name: "lines_direction_check"
+    t.check_constraint "fare_km_rounding IS NULL OR (fare_km_rounding::text = ANY (ARRAY['up'::character varying, 'down'::character varying]::text[]))", name: "lines_fare_km_rounding_check"
     t.check_constraint "fare_step_km IS NULL OR fare_step_km >= 0::numeric", name: "lines_fare_step_km_check"
     t.check_constraint "toll_load_factor > 0", name: "lines_toll_load_factor_check"
   end
