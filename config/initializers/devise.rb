@@ -13,6 +13,7 @@ Devise.setup do |config|
     jwt.revocation_requests = [
       ["DELETE", %r{^/auth/sign_out$}]
     ]
-    jwt.expiration_time = 24.hours.to_i
+    # The iOS app refreshes the token on each cold launch, so an active user stays signed in.
+    jwt.expiration_time = 90.days.to_i
   end
 end
