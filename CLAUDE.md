@@ -90,6 +90,7 @@ db/migrate/
   007 — create_active_storage_tables
   008 — add_trgm_search_indexes
   046 — create_user_identities
+  049 — add_modern_bus_transport_mode
 ```
 
 ---

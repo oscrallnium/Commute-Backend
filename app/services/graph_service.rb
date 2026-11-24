@@ -11,9 +11,9 @@ class GraphService
   EARTH_RADIUS_KM  = 6371.0
   MIN_TRAVEL_TIME  = 2.0 # minutes
   # Average speed in km/h per mode for an edge shorter than EXPRESS_GAP_KM.
-  SPEED_KMH_BY_MODE = { "bus" => 22.0, "jeepney" => 16.0, "modern_jeepney" => 16.0, "tricycle" => 15.0, "train" => 30.0 }.freeze
+  SPEED_KMH_BY_MODE = { "bus" => 22.0, "modern_bus" => 22.0, "jeepney" => 16.0, "modern_jeepney" => 16.0, "tricycle" => 15.0, "train" => 30.0 }.freeze
   DEFAULT_SPEED_KMH = 22.0
-  ROAD_MODES        = %w[bus jeepney modern_jeepney tricycle uv_express].freeze
+  ROAD_MODES        = %w[bus modern_bus jeepney modern_jeepney tricycle uv_express].freeze
   # A road edge at least EXPRESS_GAP_KM long runs on an expressway at EXPRESS_SPEED_KMH.
   EXPRESS_GAP_KM    = 5.0
   EXPRESS_SPEED_KMH = 45.0
@@ -843,7 +843,7 @@ class GraphService
   end
 
   def mk_type_for(mode)
-    { "train" => "train", "bus" => "bus", "jeepney" => "automobile",
+    { "train" => "train", "bus" => "bus", "modern_bus" => "bus", "jeepney" => "automobile",
       "e_jeepney" => "automobile", "modern_jeepney" => "automobile", "tricycle" => "automobile",
       "uv_express" => "automobile" }.fetch(mode, "transit")
   end
