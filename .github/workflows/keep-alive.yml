@@ -1,0 +1,23 @@
+name: Keep alive
+
+# Sends a request to /health every 10 minutes so that the Render free instance
+# does not spin down after 15 minutes without traffic.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the health endpoint
+        env:
+          HEALTH_URL: ${{ vars.KEEP_ALIVE_URL || 'https://commute-backend-a6lj.onrender.com/health' }}
+        run: |
+          curl --silent --show-error --fail \
+            --max-time 120 --retry 2 --retry-delay 10 \
+            --output /dev/null \
+            --write-out "HTTP %{http_code} in %{time_total}s\n" \
+            "$HEALTH_URL"
