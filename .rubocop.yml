@@ -1,3 +1,10 @@
+inherit_from: .rubocop_todo.yml
+
+# Combines the Exclude lists here with the lists in .rubocop_todo.yml.
+inherit_mode:
+  merge:
+    - Exclude
+
 plugins:
   - rubocop-rails
 
