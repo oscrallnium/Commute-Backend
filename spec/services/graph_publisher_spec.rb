@@ -259,27 +259,39 @@ RSpec.describe GraphPublisher do
 
   describe "transfer changes" do
     let(:path) { [{ lat: 14.51, lng: 121.0 }, { lat: 14.52, lng: 121.0 }] }
+    let(:points) do
+      { "OPST_ROAD_S2" => "OPST_ROAD_S2_AP_1", "OPST_RAIL_B" => "OPST_RAIL_B_AP_1",
+        "OPST_ROAD_S3" => "OPST_ROAD_S3_AP_1", "OPST_RAIL_C" => "OPST_RAIL_C_AP_1" }
+    end
+
+    before do
+      points.each do |station_id, point_id|
+        StationAccessPoint.create!(access_point_id: point_id, station_id: station_id, name: "Gate", kind: "both",
+                                   lat: 14.5, lng: 121.0)
+      end
+      Edge.find("X__OPST_ROAD_S2__OPST_RAIL_B")
+          .update!(from_access_point_id: points["OPST_ROAD_S2"], to_access_point_id: points["OPST_RAIL_B"])
+    end
 
     it "adds a transfer edge with the convention ID and marks both stops as interchanges" do
-      result = publish({ type: "transfer_add", from_station_id: "OPST_ROAD_S3", to_station_id: "OPST_RAIL_C",
-                         travel_time_minutes: 4, distance_km: 0.15, polyline: path })
+      result = publish(add_transfer("OPST_ROAD_S3", "OPST_RAIL_C"))
 
       expect_created(result)
-      edge = Edge.find("X__OPST_ROAD_S3__OPST_RAIL_C")
+      edge = Edge.find("X__OPST_ROAD_S3_AP_1__OPST_RAIL_C_AP_1")
       expect(edge).to have_attributes(line: "INTERCHANGE", mode: "walk", bidirectional: true, base_fare: 0)
       expect(Station.where(station_id: %w[OPST_ROAD_S3 OPST_RAIL_C]).pluck(:is_interchange)).to eq([true, true])
-      expect(result.body[:data][:created]).to eq([{ index: 0, type: "transfer_add", id: "X__OPST_ROAD_S3__OPST_RAIL_C" }])
+      expect(result.body[:data][:created]).to eq([{ index: 0, type: "transfer_add", id: "X__OPST_ROAD_S3_AP_1__OPST_RAIL_C_AP_1" }])
     end
 
     it "refuses a second transfer between the same two stops" do
-      result = publish({ type: "transfer_add", from_station_id: "OPST_RAIL_B", to_station_id: "OPST_ROAD_S2",
-                         travel_time_minutes: 4, distance_km: 0.15, polyline: path })
+      result = publish(add_transfer("OPST_RAIL_B", "OPST_ROAD_S2"))
 
       expect(result.status).to eq(:unprocessable_content)
     end
 
     def add_transfer(from, to, **extra)
       { type: "transfer_add", from_station_id: from, to_station_id: to,
+        from_access_point_id: points.fetch(from), to_access_point_id: points.fetch(to),
         travel_time_minutes: 4, distance_km: 0.15, polyline: path }.merge(extra)
     end
 
@@ -314,7 +326,7 @@ RSpec.describe GraphPublisher do
 
       expect_created(result)
       expect(Edge.find("X__OPST_ROAD_S2__OPST_RAIL_B").bidirectional).to be false
-      expect(Edge.find("X__OPST_RAIL_B__OPST_ROAD_S2").bidirectional).to be false
+      expect(Edge.find("X__OPST_RAIL_B_AP_1__OPST_ROAD_S2_AP_1").bidirectional).to be false
     end
 
     it "refuses to make a transfer two-way while a reverse transfer exists" do
