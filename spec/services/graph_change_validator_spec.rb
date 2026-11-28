@@ -62,9 +62,11 @@ RSpec.describe GraphChangeValidator do
   it "rejects a transfer between legacy IDs and between a stop and itself" do
     errors = errors_for(
       { type: "transfer_add", from_station_id: "STACRUZ.LRT_BUENDIA_STOP3", to_station_id: "MRT_TAFT",
-        travel_time_minutes: 3, distance_km: 0.2, polyline: [{ lat: 14.5, lng: 121 }, { lat: 14.6, lng: 121 }] },
+        from_access_point_id: "AP_A", to_access_point_id: "AP_B", travel_time_minutes: 3, distance_km: 0.2,
+        polyline: [{ lat: 14.5, lng: 121 }, { lat: 14.6, lng: 121 }] },
       { type: "transfer_add", from_station_id: "MRT_TAFT", to_station_id: "MRT_TAFT",
-        travel_time_minutes: 3, distance_km: 0.2, polyline: [{ lat: 14.5, lng: 121 }, { lat: 14.6, lng: 121 }] }
+        from_access_point_id: "AP_A", to_access_point_id: "AP_B", travel_time_minutes: 3, distance_km: 0.2,
+        polyline: [{ lat: 14.5, lng: 121 }, { lat: 14.6, lng: 121 }] }
     )
 
     expect(errors.map { |e| [e[:index], e[:field]] }).to eq([[0, "from_station_id"], [1, "to_station_id"]])
